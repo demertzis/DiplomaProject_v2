@@ -1,4 +1,4 @@
-from app.models.environment import V2GEnvironment
+from app.models.garage_env import V2GEnvironment
 import matplotlib.pyplot as plt
 
 from app.tests.test_vehicle import test_vehicle

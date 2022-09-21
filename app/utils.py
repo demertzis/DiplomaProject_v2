@@ -30,7 +30,7 @@ def find_intersection_v2(x1, y1, c) -> Union[Tuple[float, float], None]:
     return None
 
 
-def create_vehicle_distribution(steps=24 * 30 * 6) -> List[List[int]]:
+def create_vehicle_distribution(steps: object = 24 * 30 * 6) -> List[List[int]]:
     time_of_day = 0
     vehicles = []
     for _ in range(steps):
@@ -56,3 +56,5 @@ def create_vehicle_distribution(steps=24 * 30 * 6) -> List[List[int]]:
             )
 
     return vehicles
+
+create_vehicle_distribution()

@@ -1,6 +1,6 @@
 import app
 from app.policies.dqn import DQNPolicy
-from app.models.environment import V2GEnvironment
+from app.models.garage_env import V2GEnvironment
 from app.utils import create_vehicle_distribution
 
 vehicles = create_vehicle_distribution()

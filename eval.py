@@ -6,7 +6,7 @@ from app.policies.smart_charger import SmartCharger
 from app.abstract.utils import compute_avg_return
 from app.policies.utils import metrics_visualization
 from app.policies.dqn import DQNPolicy
-from app.models.environment import V2GEnvironment
+from app.models.garage_env import V2GEnvironment
 
 train_env = V2GEnvironment(300, './data/GR-data-new.csv', 'train')
 vehicles = create_vehicle_distribution(6552)

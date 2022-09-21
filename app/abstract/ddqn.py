@@ -95,22 +95,22 @@ class DDQNPolicy:
 
         # Create a checkpointer instance
         # This is used to save the current state of the policy, agent and replay buffer
-        self.train_checkpointer = common.Checkpointer(
-            ckpt_dir=self.train_dir,
-            max_to_keep=5,
-            agent=self.agent,
-            policy=self.agent.policy,
-            replay_buffer=self.replay_buffer,
-            global_step=self.global_step,
-        )
+        # self.train_checkpointer = common.Checkpointer(
+        #     # ckpt_dir=self.train_dir,
+        #     max_to_keep=5,
+        #     agent=self.agent,
+        #     policy=self.agent.policy,
+        #     replay_buffer=self.replay_buffer,
+        #     global_step=self.global_step,
+        # )
 
         # If a checkpoint already exists in the "train_dir" folder, output a message informing the user
-        if self.train_checkpointer.checkpoint_exists:
-            print("Checkpoint found. Continuing from checkpoint...")
+        # if self.train_checkpointer.checkpoint_exists:
+        #     print("Checkpoint found. Continuing from checkpoint...")
 
         # This will restore the agent, policy and replay buffer from the checkpoint, if it exists
         # Or it will just initialize everything to their initial setup
-        self.train_checkpointer.initialize_or_restore()
+        # self.train_checkpointer.initialize_or_restore()
 
         # Create a dataset and an iterator instance, this helps to create batches of data in training
         dataset = self.replay_buffer.as_dataset(
@@ -152,6 +152,7 @@ class DDQNPolicy:
         # Create a random policy to sample some data from the environment to populate the replay buffer
         random_policy = random_tf_policy.RandomTFPolicy(self.train_env.time_step_spec(), self.train_env.action_spec())
         self.collect_data(self.train_env, random_policy, self.initial_collect_steps)
+
         # Wrap the train function to speed it up
         self.agent.train = common.function(self.agent.train)
 
