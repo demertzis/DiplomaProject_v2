@@ -12,6 +12,8 @@ def vanilla(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.nd
 		buy_price_max = (abs(min(0., demand_overflow)) * crid_price + min(AVG_CONSUMPTION, max(0., total_demand)) *
 		                 prices[
 			                 tick]) / total_demand
+	else:
+		return np.asarray([np.float32(0.0) for _ in action])
 
 	neg_values = np.sum(action, where = [i < 0 for i in action])
 	pos_values = np.sum(action, where = [i >= 0 for i in action])
@@ -19,12 +21,12 @@ def vanilla(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.nd
 	if total_demand >= 0:
 		buy_price_final = ((pos_values - abs(neg_values)) * buy_price_max + abs(
 			neg_values) * sell_price_min) / pos_values
-		return np.asarray([max(i, 0) * buy_price_final + min(i, 0) * sell_price_min for i in action])
+		return np.asarray([np.float32(max(i, 0) * buy_price_final + min(i, 0) * sell_price_min) for i in action])
 
 	if total_demand < 0:
 		sell_price_final = ((abs(neg_values) - pos_values) * sell_price_min + pos_values * buy_price_max) / abs(
 			neg_values)
-		return np.asarray([max(i, 0) * buy_price_max + min(i, 0) * sell_price_final for i in action])
+		return np.asarray([np.float32(max(i, 0) * buy_price_max + min(i, 0) * sell_price_final) for i in action])
 
 
 def halfway_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.ndarray) -> np.ndarray:
@@ -44,7 +46,7 @@ def halfway_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: in
 	# final_revenue = np.sum(rewards) - min(AVG_CONSUMPTION, np.sum(action)) * prices[tick] - max(0, np.sum(
 	# 	action) - AVG_CONSUMPTION)
 	# print(f'total rewards = {final_revenue}')
-	return np.asarray([i * (final_buy_price if i > 0 else final_sell_price) for i in action])
+	return np.asarray([np.float32(i * (final_buy_price if i > 0 else final_sell_price)) for i in action])
 
 
 def punishing_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.ndarray):
@@ -84,7 +86,7 @@ def punishing_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: 
 	print(f'punishing sum: {np.sum(np.asarray([i * (new_buy_price if i > 0 else new_sell_price) for i in action]))}\n')
 	print(f'non-punishing sum: {np.sum(uniform_rewards)}\n')
 
-	return np.asarray([i * (new_buy_price if i > 0 else new_sell_price) for i in action])
+	return np.asarray([np.float32(i * (new_buy_price if i > 0 else new_sell_price)) for i in action])
 
 
 def compute_exp_weights(action: np.ndarray, CURRENT_BUY_PRICE: np.float32, CURRENT_SELL_PRICE: np.float32,
@@ -157,7 +159,7 @@ def punishing_non_uniform_rewards(prices: np.ndarray, crid_price: np.float32, ti
 	                 max(total_buy_load - AVG_CONSUMPTION, 0) * crid_price) / total_buy_load
 	buy_sorted_arr = compute_exp_weights(action, UNIFORM_BUY_PRICE, UNIFORM_SELL_PRICE, crid_price * 0.8, MAX_BUY_PRICE)
 
-	return np.asarray([a*b for a,b in zip(action, buy_sorted_arr)])
+	return np.asarray([np.float32(a * b) for a, b in zip(action, buy_sorted_arr)])
 
 def reinforcement_learning_rewards(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.ndarray):
 	pass

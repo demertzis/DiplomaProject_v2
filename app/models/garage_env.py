@@ -29,7 +29,7 @@ class V2GEnvironment(PyEnvironment):
                  capacity: int,
                  name: str,
                  vehicle_distribution: List[List[int]] = None,
-                 energy_curve: EnergyCurve = None,
+                 # energy_curve: EnergyCurve = None,
                  power_maret_env: PowerMarketEnv = None,
                  next_agent: Any = None,
                  charge_list: List[np.float32] = []):
@@ -37,7 +37,7 @@ class V2GEnvironment(PyEnvironment):
             shape=(), dtype=np.int32, minimum=0, maximum=self._length - 1, name="action"
         )
         self._observation_spec = array_spec.BoundedArraySpec(
-            shape=(34,), dtype=np.float32, minimum=-1, maximum=1, name="observation"
+            shape=(34,), dtype=np.float32, minimum=-10, maximum=10, name="observation" # Changed min, max, from 1 to 10
         )
         self._time_step_spec = time_step.TimeStep(
             step_type=array_spec.BoundedArraySpec(shape=(), dtype=np.int32, minimum=0, maximum=2),
@@ -56,9 +56,9 @@ class V2GEnvironment(PyEnvironment):
                 "num_of_vehicles": [],
                 "cost": [],
                 "overcharged_time_per_car": [],
-                "c_rate_per_car": [],
-                "cycle_degradation": [],
-                "age_degradation": [],
+                # "c_rate_per_car": [],
+                # "cycle_degradation": [],
+                # "age_degradation": [],
                 "actions": [],
                 "charging_coefficient": [],
                 "test_sum": 0,
@@ -66,9 +66,8 @@ class V2GEnvironment(PyEnvironment):
         }
         self._capacity = capacity
         self._parking = Parking(capacity, name)
-        self._energy_curve = energy_curve
+        # self._energy_curve = energy_curve
         self._vehicle_distribution = vehicle_distribution
-        self._charge_list: List[np.float32] = []
         self._next_agent: Any = next_agent
         self._charge_list: List[np.float32] = charge_list
 
@@ -76,15 +75,18 @@ class V2GEnvironment(PyEnvironment):
     def get_metrics(self):
         return self._state["metrics"]
 
+    def next_agent(self):
+        return self._next_agent
+
     def reset_metrics(self):
         self._state["metrics"] = {
             "loss": [],
             "num_of_vehicles": [],
             "cost": [],
             "overcharged_time_per_car": [],
-            "c_rate_per_car": [],
-            "cycle_degradation": [],
-            "age_degradation": [],
+            # "c_rate_per_car": [],
+            # "cycle_degradation": [],
+            # "age_degradation": [],
             "actions": [],
             "charging_coefficient": [],
             "test_sum": 0,
@@ -108,8 +110,12 @@ class V2GEnvironment(PyEnvironment):
         self._state["time_of_day"] = 0
         self._state["step"] = 0
 
-        energy_costs = self._energy_curve.get_next_batch()
-        energy_cost_intra_day = self._energy_curve.get_current_cost_intra_day()
+        observation = self._power_market_env.reset()
+        energy_costs = observation[:24]
+        energy_cost_intra_day = observation[24]
+
+        # energy_costs = self._energy_curve.get_next_batch()
+        # energy_cost_intra_day = self._energy_curve.get_current_cost_intra_day()
         return time_step.TimeStep(
             step_type=time_step.StepType.FIRST,
             reward=np.array(0.0, dtype=np.float32),
@@ -148,8 +154,8 @@ class V2GEnvironment(PyEnvironment):
         discount = 0
 
         self._state["metrics"]["cost"].append(0)
-        self._state["metrics"]["cycle_degradation"].append(0)
-        self._state["metrics"]["age_degradation"].append(0)
+        # self._state["metrics"]["cycle_degradation"].append(0)
+        # self._state["metrics"]["age_degradation"].append(0)
         self._state["metrics"]["num_of_vehicles"].append(num_of_vehicles)
         self._state["metrics"]["actions"].append(idx)
         self._state["metrics"]["charging_coefficient"].append(charging_coefficient)
@@ -166,16 +172,18 @@ class V2GEnvironment(PyEnvironment):
 
                 new_energy = round(max_energy * charging_coefficient, 2)
 
+                self._charge_list.insert(0, np.float32(new_energy))
                 if self._next_agent is not None:
-                    self._charge_list.insert(0, np.float32(new_energy))
-                    self._next_agent._train()
+                    # if self._name == 'eval':
+                    # self._next_agent.eval_env.step()
+                    self._next_agent.collect_step()
+                    # self._next_agent._train()
                     # self._next_agent.train_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
                     # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
 
 
-                observation, current_cost, done, info = self._power_market_env.step(self._charge_list.insert(0, np.float32(new_energy)))
+                observation, current_cost, done, info = self._power_market_env.step(self._charge_list)
 
-                self._charge_list = []
 
 
                 # print(f"New energy: {new_energy}")
@@ -216,40 +224,41 @@ class V2GEnvironment(PyEnvironment):
                 # )
                 self._state["metrics"]["test_sum"] += new_energy
 
-                cycle_degradation_cost = 0.0
-                for degrade_rate in degrade_rates:
-                    cycle_degradation_cost += (
-                        (
-                                self.cycle_degradation(degrade_rate / self._battery_capacity)
-                                * self._battery_capacity
-                                * self._battery_cost
-                        )
-                        if degrade_rate > 0
-                        else 0
-                    )
-                cycle_degradation_cost = int(cycle_degradation_cost * 100)
+                # cycle_degradation_cost = 0.0
+                # for degrade_rate in degrade_rates:
+                #     cycle_degradation_cost += (
+                #         (
+                #                 self.cycle_degradation(degrade_rate / self._battery_capacity)
+                #                 * self._battery_capacity
+                #                 * self._battery_cost
+                #         )
+                #         if degrade_rate > 0
+                #         else 0
+                #     )
+                # cycle_degradation_cost = int(cycle_degradation_cost * 100)
+                #
+                # age_degradation_cost = 0.0
+                # for charge_level in avg_charge_levels:
+                #     age_degradation_cost += (
+                #             self.age_degradation(charge_level / self._battery_capacity)
+                #             * self._battery_capacity
+                #             * self._battery_cost
+                #     )
+                # age_degradation_cost = int(age_degradation_cost * 100)
 
-                age_degradation_cost = 0.0
-                for charge_level in avg_charge_levels:
-                    age_degradation_cost += (
-                            self.age_degradation(charge_level / self._battery_capacity)
-                            * self._battery_capacity
-                            * self._battery_cost
-                    )
-                age_degradation_cost = int(age_degradation_cost * 100)
-
-                reward = -cost - cycle_degradation_cost - age_degradation_cost
+                reward = -cost
+                # reward = -cost - cycle_degradation_cost - age_degradation_cost
                 # reward = -cost - unmet_demand - cycle_degradation_cost - age_degradation_cost
                 # reward = sigmoid( )
 
                 # Update metrics
                 self._state["metrics"]["cost"][-1] = cost
-                self._state["metrics"]["cycle_degradation"][-1] = cycle_degradation_cost
-                self._state["metrics"]["age_degradation"][-1] = age_degradation_cost
+                # self._state["metrics"]["cycle_degradation"][-1] = cycle_degradation_cost
+                # self._state["metrics"]["age_degradation"][-1] = age_degradation_cost
                 self._state["metrics"]["overcharged_time_per_car"] += overcharged_time
-                self._state["metrics"]["c_rate_per_car"] += [
-                    round(d / self._battery_capacity, 4) for d in degrade_rates
-                ]
+                # self._state["metrics"]["c_rate_per_car"] += [
+                #     round(d / self._battery_capacity, 4) for d in degrade_rates
+                # ]
 
                 discount = 0.9
                 # print(f"Energy cost: {cost}")
@@ -257,9 +266,20 @@ class V2GEnvironment(PyEnvironment):
                 # print(f"Age degradation cost: {age_degradation_cost}")
 
             except ValueError as e:
-                print(cost, cycle_degradation_cost, age_degradation_cost, avg_charge_levels)
+                # print(cost, cycle_degradation_cost, age_degradation_cost, avg_charge_levels)
                 print(self)
                 raise e
+
+        elif num_of_vehicles == 0:
+            self._charge_list.insert(0, np.float32(0.0))
+            if self._next_agent is not None:
+                self._next_agent.collect_step()
+                # self._next_agent.train_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
+                # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
+
+
+            observation, current_cost, done, info = self._power_market_env.step(self._charge_list)
+
 
         self._state["time_of_day"] += 1
         self._state["time_of_day"] %= 24
@@ -269,12 +289,14 @@ class V2GEnvironment(PyEnvironment):
         if self._state["time_of_day"] != 0:
             self._add_new_cars()
 
-        if self._state["step"] == 24:
-            energy_costs = self._energy_curve.get_current_batch()
-        else:
-            energy_costs = self._energy_curve.get_next_batch()
+        energy_costs = observation[:24]
+        # if self._state["step"] == 24:
+        #     energy_costs = self._energy_curve.get_current_batch()
+        # else:
+        #     energy_costs = self._energy_curve.get_next_batch()
+        energy_cost_intra_day = observation[24]
 
-        energy_cost_intra_day = self._energy_curve.get_current_cost_intra_day()
+        # energy_cost_intra_day = self._energy_curve.get_current_cost_intra_day()
 
         max_acceptable = self._parking.get_next_max_charge() - self._parking.get_next_min_discharge()
         min_acceptable = self._parking.get_next_max_discharge() - self._parking.get_next_min_charge()
@@ -372,19 +394,19 @@ class V2GEnvironment(PyEnvironment):
 
         return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge, self._name)
 
-    def cycle_degradation(self, c_rate):
-        return 5e-5 * c_rate + 1.8e-5
-
-    def age_degradation(self, soc):
-        """
-        Returns the age degradation percentage based on the following formula
-
-        ``L = 0.09 * soc * 0.02 / 900 / 24``
-
-        ### Returns
-            float : the total lost capacity
-        """
-        return (0.09 * soc + 0.02) / 900 / 24
+    # def cycle_degradation(self, c_rate):
+    #     return 5e-5 * c_rate + 1.8e-5
+    #
+    # def age_degradation(self, soc):
+    #     """
+    #     Returns the age degradation percentage based on the following formula
+    #
+    #     ``L = 0.09 * soc * 0.02 / 900 / 24``
+    #
+    #     ### Returns
+    #         float : the total lost capacity
+    #     """
+    #     return (0.09 * soc + 0.02) / 900 / 24
 
     def toJson(self) -> Dict[str, Any]:
         return {"name": self._name, "parking": self._parking.toJson()}

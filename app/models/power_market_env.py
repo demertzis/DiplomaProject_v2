@@ -55,8 +55,8 @@ class PowerMarketEnv(TradingEnv):
 		self._done = False
 		self.prices, self.signal_features = self._process_data()
 		self._episode_count = (self._episode_count + 1) % self._total_episodes
-		if self._episode_count > 0:
-			self._energy_curve.get_next_episode()
+		# if self._episode_count > 0:
+		# 	self._energy_curve.get_next_episode()
 		self._per_agent_reward = np.full((NUMBER_OF_AGENTS,), 0., dtype = np.float32)
 		self._step_reward = np.full((NUMBER_OF_AGENTS, 1), 0., dtype = np.float32)
 		self._agent_identity = 0
@@ -75,10 +75,10 @@ class PowerMarketEnv(TradingEnv):
 	def _process_data(self):
 		# episode_frame = self._episode_count * 24
 		# prices = self._energy_curve.loc[:, 'MCP_DAM'].to_numpy()[episode_frame: episode_frame + 24].astype(np.float32)
-		prices = self._energy_curve.get_current_batch()
+		prices = self._energy_curve.get_current_batch(normalized=False)
 
 		# signal_features = self._energy_curve.loc[:, 'MCP_CRID'].to_numpy()[episode_frame: episode_frame + 24].astype(np.float32)
-		signal_features = self._energy_curve.get_current_batch_intra_day()
+		signal_features = self._energy_curve.get_current_batch_intra_day(normalized=False)
 
 		return prices, signal_features
 
@@ -109,6 +109,8 @@ class PowerMarketEnv(TradingEnv):
 
 		if self._current_tick == self._end_tick:
 			self._done = True
+			self._energy_curve.get_next_episode()
+
 
 		return observation, agent_reward, self._done, self._info
 
