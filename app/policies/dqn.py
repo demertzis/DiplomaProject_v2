@@ -1,22 +1,20 @@
 from __future__ import absolute_import, division, print_function, annotations
 
 import sys
+from typing import List
 
+import numpy as np
 from tensorflow.keras import layers
 from tf_agents.networks import sequential
 from tf_agents.specs import tensor_spec
 from tf_agents.trajectories import trajectory
 from tf_agents.utils import common
 
-import numpy as np
-
-from typing import List
-
 from app.abstract.ddqn import DDQNPolicy
 # from app.abstract.utils import compute_avg_return
 from app.models.garage_env import V2GEnvironment
 from app.policies.dummy_v2g import DummyV2G
-
+from config import NUMBER_OF_AGENTS
 
 
 class DQNPolicy(DDQNPolicy):
@@ -48,6 +46,9 @@ class DQNPolicy(DDQNPolicy):
         self._policy = None
         self._next_agent = train_env.next_agent()
         self._charge_list = charge_list
+        self._eval_time_step = None
+        self._episode_return_eval = None
+        self._total_return_eval = None
 
         # The neural network
         self.q_net = sequential.Sequential(
@@ -149,16 +150,21 @@ class DQNPolicy(DDQNPolicy):
                 sys.stdout.flush()
 
             if step % self.eval_interval == 0:
-                avg_return = self.compute_avg_return(self.eval_env, self.agent.policy, self.num_eval_episodes)
+                avg_return = self.compute_avg_return(self.num_eval_episodes)
                 epoch = self._i // self.eval_interval
                 total_epochs = self.num_iterations // self.eval_interval
                 print(
-                    "Epoch: {0}/{1} step = {2}: Average Return = {3}".format(epoch, total_epochs, step, avg_return)
+                    "Epoch: {0}/{1} step = {2}: Average Return (Average per day and per agent) = {3}".format(epoch,
+                                                                                                             total_epochs,
+                                                                                                             step,
+                                                                                                             avg_return)
                 )
                 self._returns.append(avg_return)
-
                 # metrics_visualization(self.raw_eval_env.get_metrics(), (i + 1) // self.eval_interval, "dqn")
-                self.raw_eval_env.hard_reset()
+                next_agent = self
+                while next_agent is not None:
+                    self.raw_eval_env.hard_reset()
+                    next_agent = next_agent.next_agent()
 
         except ValueError as e:
             print(self.train_env.current_time_step())
@@ -170,35 +176,58 @@ class DQNPolicy(DDQNPolicy):
         #     moving_average(self._loss, 240), "Training loss", 0, "plots/raw_dqn", "Loss", log_scale=True, no_xticks=True
         # )
 
+    def collect_step_eval(self):
+        action_step = self.agent.policy.action(self._eval_time_step)
+        self._eval_time_step = self.eval_env.step(action_step.action)
+        self._episode_return_eval += self._eval_time_step.reward
+
     def compute_avg_return(self, num_episodes=10):
         total_return = 0.0
         step = 0
 
+        next_agent = self
+        while next_agent != None:
+            next_agent._total_return_eval = 0.0
+            next_agent = next_agent.next_agent()
+
         for _ in range(num_episodes):
 
-            next_agent = self.next_agent()
-            # Reset the environment
-            time_step = self.eval_env.reset()
-            # Initialize the episode return
-            episode_return = 0.0
+            next_agent = self
+            while next_agent != None:
+                next_agent._eval_time_step = next_agent.eval_env.reset()
+                next_agent._episode_return_eval = 0.0
+                next_agent = next_agent.next_agent()
 
             # While the current state is not a terminal state
-            while not time_step.is_last():
-                # Use policy to get the next action
-                action_step = self.agent.policy.action(time_step)
-                # Apply action on the environment to get next state
-                time_step = self.eval_env.step(action_step.action)
-                # Add reward on the episode return
-                episode_return += time_step.reward
+            while not self._eval_time_step.is_last():
+                # Always clearing the action-list, that will be filled with all agents actions for the market env
+                self._charge_list.clear()
+                # step implemantiation for multi agent environment
+                self.collect_step_eval()
                 # Increase step counter
                 step += 1
+
             # Add episode return on total_return counter
-            total_return += episode_return
+            next_agent = self
+            while next_agent != None:
+                next_agent._total_return_eval += next_agent._episode_return_eval
+                next_agent = next_agent.next_agent()
 
         # Calculate average return
-        avg_return = total_return / step
+        # avg_return = total_return / step
+
+        avg_agent_return = None
+
+        next_agent = self
+        while next_agent != None:
+            avg_return = next_agent._total_return_eval / step
+            avg_agent_return += avg_return
+            next_agent._returns.append(avg_agent_return)
+            next_agent.raw_eval_env.hard_reset()
+            next_agent = next_agent.next_agent()
+
         # Unpack value
-        return avg_return.numpy()[0]
+        return avg_agent_return.numpy()[0] / NUMBER_OF_AGENTS
 
     def collect_step(self):
         time_step = self.train_env.current_time_step()
@@ -212,5 +241,6 @@ class DQNPolicy(DDQNPolicy):
 
     def collect_data(self, steps):
         for _ in range(steps):
+            # Always clearing the action-list, that will be filled with all agents actions for the market env.
             self._charge_list.clear()
             self.collect_step()

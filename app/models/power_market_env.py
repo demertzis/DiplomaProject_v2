@@ -51,12 +51,17 @@ class PowerMarketEnv(TradingEnv):
 		self.action_space = spaces.Box(low = -np.inf, high = np.inf, shape = (NUMBER_OF_AGENTS,), dtype = np.float32)
 		self.observation_space = spaces.Box(low = -np.inf, high = np.inf, shape = (25,), dtype = np.float32)
 
-	def reset(self):
+	def hard_reset(self):
+		self._energy_curve.reset()
+		self._episode_count = 0
+		return self.reset()
+
+	def reset(self):#TODO decide on making hard resset a private method and calling it with argument from reset
 		self._done = False
 		self.prices, self.signal_features = self._process_data()
 		self._episode_count = (self._episode_count + 1) % self._total_episodes
-		# if self._episode_count > 0:
-		# 	self._energy_curve.get_next_episode()
+		if self._episode_count == 0:
+			return self.hard_reset()
 		self._per_agent_reward = np.full((NUMBER_OF_AGENTS,), 0., dtype = np.float32)
 		self._step_reward = np.full((NUMBER_OF_AGENTS, 1), 0., dtype = np.float32)
 		self._agent_identity = 0
@@ -64,7 +69,7 @@ class PowerMarketEnv(TradingEnv):
 		self._total_reward = 0
 		self._total_profit = 0.  # unit
 		# self._first_rendering = True
-		self.history = None
+		self.history = None #TODO sort out what to do with history
 		return self._get_observation()
 
 	def _get_observation(self):
@@ -115,7 +120,7 @@ class PowerMarketEnv(TradingEnv):
 		return observation, agent_reward, self._done, self._info
 
 	def _calculate_reward(self, action):
-		return self.reward_function(self.prices, self._get_observation()[24], self._current_tick, action)
+		return self.reward_function(self.prices, self.signal_features[self._current_tick], self._current_tick, action)
 
 	def _update_profit(self, step_reward):
 		pass

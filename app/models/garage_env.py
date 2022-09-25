@@ -4,7 +4,6 @@ import math
 import random
 from typing import Any, Dict, List
 
-from app.models.power_market_env import PowerMarketEnv
 import numpy as np
 # import statistics
 from tf_agents.environments.py_environment import PyEnvironment
@@ -13,8 +12,8 @@ from tf_agents.trajectories import time_step
 
 import config
 from app.error_handling import ParkingIsFull
-from app.models.energy import EnergyCurve
 from app.models.parking import Parking
+from app.models.power_market_env import PowerMarketEnv
 # from app.policies.dqn import DQNPolicy
 from app.models.vehicle import Vehicle
 
@@ -37,7 +36,7 @@ class V2GEnvironment(PyEnvironment):
             shape=(), dtype=np.int32, minimum=0, maximum=self._length - 1, name="action"
         )
         self._observation_spec = array_spec.BoundedArraySpec(
-            shape=(34,), dtype=np.float32, minimum=-10, maximum=10, name="observation" # Changed min, max, from 1 to 10
+            shape=(34,), dtype=np.float32, minimum=-10, maximum=10, name="observation"  # Changed min, max, from 1 to 10
         )
         self._time_step_spec = time_step.TimeStep(
             step_type=array_spec.BoundedArraySpec(shape=(), dtype=np.int32, minimum=0, maximum=2),
@@ -71,7 +70,6 @@ class V2GEnvironment(PyEnvironment):
         self._next_agent: Any = next_agent
         self._charge_list: List[np.float32] = charge_list
 
-
     def get_metrics(self):
         return self._state["metrics"]
 
@@ -103,6 +101,7 @@ class V2GEnvironment(PyEnvironment):
 
     def hard_reset(self):
         self._state["global_step"] = 0
+        self._power_market_env.hard_reset()
         # self._energy_curve.reset()
         self.reset_metrics()
 
@@ -134,7 +133,7 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
-                    ],
+                ],
                 dtype=np.float32,
             ),
         )
@@ -169,22 +168,19 @@ class V2GEnvironment(PyEnvironment):
 
                 )
 
-
                 new_energy = round(max_energy * charging_coefficient, 2)
 
                 self._charge_list.insert(0, np.float32(new_energy))
                 if self._next_agent is not None:
                     # if self._name == 'eval':
                     # self._next_agent.eval_env.step()
-                    self._next_agent.collect_step()
+
+                    self._next_agent.collect_step() if self._name == 'train' else self._next_agent.collect_step_eval()
                     # self._next_agent._train()
                     # self._next_agent.train_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
                     # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
 
-
                 observation, current_cost, done, info = self._power_market_env.step(self._charge_list)
-
-
 
                 # print(f"New energy: {new_energy}")
 
@@ -246,7 +242,7 @@ class V2GEnvironment(PyEnvironment):
                 #     )
                 # age_degradation_cost = int(age_degradation_cost * 100)
 
-                reward = -cost
+                reward = int(-cost)
                 # reward = -cost - cycle_degradation_cost - age_degradation_cost
                 # reward = -cost - unmet_demand - cycle_degradation_cost - age_degradation_cost
                 # reward = sigmoid( )
@@ -270,16 +266,14 @@ class V2GEnvironment(PyEnvironment):
                 print(self)
                 raise e
 
-        elif num_of_vehicles == 0:
+        elif num_of_vehicles == 0:#TODO Deal with 0 vehicles situation
             self._charge_list.insert(0, np.float32(0.0))
             if self._next_agent is not None:
-                self._next_agent.collect_step()
+                self._next_agent.collect_step() if self._name == 'train' else self._next_agent.collect_step_eval()
                 # self._next_agent.train_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
                 # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
 
-
             observation, current_cost, done, info = self._power_market_env.step(self._charge_list)
-
 
         self._state["time_of_day"] += 1
         self._state["time_of_day"] %= 24
@@ -289,7 +283,11 @@ class V2GEnvironment(PyEnvironment):
         if self._state["time_of_day"] != 0:
             self._add_new_cars()
 
-        energy_costs = observation[:24]
+        # energy_costs = np.ndarray(observation[self._state["time_of_day"]:24], dtype = np.float32)
+        energy_costs = np.append(observation[self._state["time_of_day"]:24],
+                                 np.full(max(0, (self._state["time_of_day"] - 12)), 0.))
+
+        # energy_costs.extend(np.full((12 - len(energy_costs),), 0., dtype=np.float32))
         # if self._state["step"] == 24:
         #     energy_costs = self._energy_curve.get_current_batch()
         # else:
@@ -340,7 +338,7 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
-                    ],
+                ],
                 dtype=np.float32,
             ),
         )
