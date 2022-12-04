@@ -1,17 +1,16 @@
 import numpy as np
+from config import CRID_COEFFICIENT, AVG_CONSUMPTION
 
-AVG_CONSUMPTION = 10.
 
 
 def vanilla(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.ndarray) -> np.ndarray:
 	total_demand = np.sum(action)
 	demand_overflow = AVG_CONSUMPTION - total_demand
-	sell_price_min = crid_price * 0.8
+	sell_price_min = crid_price * CRID_COEFFICIENT
 	buy_price_max = prices[tick]
 	if total_demand != 0:
 		buy_price_max = (abs(min(0., demand_overflow)) * crid_price + min(AVG_CONSUMPTION, max(0., total_demand)) *
-		                 prices[
-			                 tick]) / total_demand
+		                 prices[tick]) / total_demand
 	else:
 		return np.asarray([np.float32(0.0) for _ in action])
 
@@ -30,7 +29,7 @@ def vanilla(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.nd
 
 
 def halfway_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.ndarray) -> np.ndarray:
-	sell_price_min = crid_price * 0.8
+	sell_price_min = crid_price * CRID_COEFFICIENT
 
 	total_sell_load = abs(np.sum(action, where = [i < 0 for i in action]))
 	total_buy_load = np.sum(action, where = [i >= 0 for i in action])
@@ -76,11 +75,11 @@ def punishing_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: 
 
 
 	elif max_buy_price <= day_avg_price:
-		total_min_sell_amount = crid_price * 0.8 * total_buy_load
+		total_min_sell_amount = crid_price * CRID_COEFFICIENT * total_buy_load
 		price_decrease_ratio = np.exp((day_avg_price - max_buy_price) / (day_avg_price - min_day_price)) \
 		                       / (np.exp((day_avg_price - max_buy_price) / (day_avg_price - min_day_price))
 		                          + np.exp(5 * (1 - (day_avg_price - max_buy_price)) / (day_avg_price - min_day_price)))
-		new_sell_price = current_sell_price - (current_sell_price - crid_price * 0.8) * price_decrease_ratio
+		new_sell_price = current_sell_price - (current_sell_price - crid_price * CRID_COEFFICIENT) * price_decrease_ratio
 		new_buy_price = current_buy_price - (current_sell_price - new_sell_price) * total_sell_load / total_buy_load
 
 	print(f'punishing sum: {np.sum(np.asarray([i * (new_buy_price if i > 0 else new_sell_price) for i in action]))}\n')
@@ -157,7 +156,7 @@ def punishing_non_uniform_rewards(prices: np.ndarray, crid_price: np.float32, ti
 						    total_sell_load
 	MAX_BUY_PRICE = (min(AVG_CONSUMPTION, total_buy_load) * prices[tick] +
 	                 max(total_buy_load - AVG_CONSUMPTION, 0) * crid_price) / total_buy_load
-	buy_sorted_arr = compute_exp_weights(action, UNIFORM_BUY_PRICE, UNIFORM_SELL_PRICE, crid_price * 0.8, MAX_BUY_PRICE)
+	buy_sorted_arr = compute_exp_weights(action, UNIFORM_BUY_PRICE, UNIFORM_SELL_PRICE, crid_price * CRID_COEFFICIENT, MAX_BUY_PRICE)
 
 	return np.asarray([np.float32(a * b) for a, b in zip(action, buy_sorted_arr)])
 

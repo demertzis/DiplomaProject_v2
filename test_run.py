@@ -43,9 +43,9 @@ agent_list: List[DQNPolicy] = []
 # garage_env_list = List[V2GEnvironment] = []
 for _ in range(NUMBER_OF_AGENTS):
     next_agent = agent_list[0] if len(agent_list) > 0 else None
-    train_env = V2GEnvironment(capacity=100, name="train", power_maret_env=market_env_train, next_agent=next_agent,
+    train_env = V2GEnvironment(capacity=100, name="train", power_market_env=market_env_train, next_agent=next_agent,
                                charge_list=charge_list)
-    eval_env = V2GEnvironment(capacity=200, name='eval', vehicle_distribution=vehicles, power_maret_env=market_env_eval,
+    eval_env = V2GEnvironment(capacity=200, name='eval', vehicle_distribution=vehicles, power_market_env=market_env_eval,
                               next_agent=next_agent, charge_list=charge_list)
 
     new_agent = DQNPolicy(train_env, eval_env, charge_list=charge_list)

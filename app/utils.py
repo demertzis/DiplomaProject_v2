@@ -45,7 +45,7 @@ def create_vehicle_distribution(steps: object = 24 * 30 * 6) -> List[List[int]]:
                 [
                     (
                         min(
-                            24 - time_of_day,
+                            25 - time_of_day, #think it's better, allows to have vehicles at 23:00
                             random.randint(7, 12),
                         ),
                         round(6 + random.random() * 20, 2),

@@ -11,6 +11,7 @@ from tf_agents.trajectories import trajectory
 from tf_agents.utils import common
 
 from app.abstract.ddqn import DDQNPolicy
+from app.abstract.utils import MyNetwork
 # from app.abstract.utils import compute_avg_return
 from app.models.garage_env import V2GEnvironment
 from app.policies.dummy_v2g import DummyV2G
@@ -49,6 +50,7 @@ class DQNPolicy(DDQNPolicy):
         self._eval_time_step = None
         self._episode_return_eval = None
         self._total_return_eval = None
+        # self.observation: time_step.TimeStep
 
         # The neural network
         self.q_net = sequential.Sequential(
@@ -62,6 +64,10 @@ class DQNPolicy(DDQNPolicy):
                 ),
             ]
         )
+
+        #Neural Network Pre-trained with TPU wrapped in Network
+        # @MyNetwork
+
 
         DDQNPolicy.__init__(self, train_env, eval_env, self.q_net)
 
@@ -83,7 +89,7 @@ class DQNPolicy(DDQNPolicy):
     def train(self):
         """
         Modiied train function to simulate multi agent learning.
-        Iteratively reset the train variables for all agents. Inductive calling of single step train function (_train)
+        Iteratively reset the train variables for all agents. Inductive calling of single step train function (_train_step)
         is implemented inside the step method of the V2G Environment
         """
         # Initialise the training constants of all the agents
@@ -94,6 +100,8 @@ class DQNPolicy(DDQNPolicy):
         # self.raw_eval_env.reset_metrics()
         #
         # next_agent: DQNPolicy = self._next_agent
+        self.raw_train_env.hard_reset()
+        self.raw_eval_env.hard_reset()
         next_agent = self
         while next_agent != None:
             next_agent.train_env.reset()
@@ -111,9 +119,13 @@ class DQNPolicy(DDQNPolicy):
 
         for _ in range(self.num_iterations):
             self.collect_data(1)  # was used in _step method
-            self._train()
+            next_agent = self
+            while next_agent != None:
+                next_agent._train_step()
+                next_agent = next_agent.next_agent()
+        self.train_checkpointer.save(global_step=self.global_step.numpy())
 
-    def _train(self):  # ->List[time_step.TimeStep]:
+    def _train_step(self):  # ->List[time_step.TimeStep]:
 
         # # Override the current implementation of the train function
         # self.train_env.reset()
@@ -163,14 +175,13 @@ class DQNPolicy(DDQNPolicy):
                 # metrics_visualization(self.raw_eval_env.get_metrics(), (i + 1) // self.eval_interval, "dqn")
                 next_agent = self
                 while next_agent is not None:
-                    self.raw_eval_env.hard_reset()
+                    self.raw_eval_env.hard_reset()#TODO check if it's ok
                     next_agent = next_agent.next_agent()
 
         except ValueError as e:
             print(self.train_env.current_time_step())
             raise e
 
-        self.train_checkpointer.save(global_step=self.global_step.numpy())
         # plot_metric(returns, "Average Returns", 0, "plots/raw_dqn", "Average Return", no_xticks=True)
         # plot_metric(
         #     moving_average(self._loss, 240), "Training loss", 0, "plots/raw_dqn", "Loss", log_scale=True, no_xticks=True
@@ -182,7 +193,7 @@ class DQNPolicy(DDQNPolicy):
         self._episode_return_eval += self._eval_time_step.reward
 
     def compute_avg_return(self, num_episodes=10):
-        total_return = 0.0
+        # total_return = 0.0
         step = 0
 
         next_agent = self
@@ -223,7 +234,7 @@ class DQNPolicy(DDQNPolicy):
             avg_return = next_agent._total_return_eval / step
             avg_agent_return += avg_return
             next_agent._returns.append(avg_agent_return)
-            next_agent.raw_eval_env.hard_reset()
+            next_agent.raw_eval_env.hard_reset()#TODO check if it's ok
             next_agent = next_agent.next_agent()
 
         # Unpack value

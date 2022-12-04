@@ -29,14 +29,14 @@ class V2GEnvironment(PyEnvironment):
                  name: str,
                  vehicle_distribution: List[List[int]] = None,
                  # energy_curve: EnergyCurve = None,
-                 power_maret_env: PowerMarketEnv = None,
+                 power_market_env: PowerMarketEnv = None,
                  next_agent: Any = None,
                  charge_list: List[np.float32] = []):
         self._action_spec = array_spec.BoundedArraySpec(
             shape=(), dtype=np.int32, minimum=0, maximum=self._length - 1, name="action"
         )
         self._observation_spec = array_spec.BoundedArraySpec(
-            shape=(34,), dtype=np.float32, minimum=-10, maximum=10, name="observation"  # Changed min, max, from 1 to 10
+            shape=(34,), dtype=np.float32, minimum=-1., maximum=1., name="observation"
         )
         self._time_step_spec = time_step.TimeStep(
             step_type=array_spec.BoundedArraySpec(shape=(), dtype=np.int32, minimum=0, maximum=2),
@@ -44,7 +44,7 @@ class V2GEnvironment(PyEnvironment):
             reward=array_spec.ArraySpec(shape=(), dtype=np.float32),
             observation=self._observation_spec,
         )
-        self._power_market_env = power_maret_env
+        self._power_market_env = power_market_env
         self._name = name
         self._state = {
             "time_of_day": 0,
@@ -99,22 +99,37 @@ class V2GEnvironment(PyEnvironment):
     def observation_spec(self):
         return self._observation_spec
 
+    def _normalize_array(self, energy_list):
+        max_value = max(energy_list)
+        min_value = min(energy_list)
+        diff = max_value - min_value
+        if diff == 0:
+            print('')
+        return list(map(lambda x: np.float32((x - min_value) / diff) if diff != 0 else np.float32(0.0), energy_list))
+
     def hard_reset(self):
         self._state["global_step"] = 0
         self._power_market_env.hard_reset()
         # self._energy_curve.reset()
         self.reset_metrics()
 
+
     def _reset(self) -> time_step.TimeStep:
         self._state["time_of_day"] = 0
         self._state["step"] = 0
+
+        #added cars from the first hour
+        self._add_new_cars()
 
         observation = self._power_market_env.reset()
         energy_costs = observation[:24]
         energy_cost_intra_day = observation[24]
 
+        normalized_energy = self._normalize_array(list(energy_costs[:12]) + [energy_cost_intra_day])
+
         # energy_costs = self._energy_curve.get_next_batch()
         # energy_cost_intra_day = self._energy_curve.get_current_cost_intra_day()
+
         return time_step.TimeStep(
             step_type=time_step.StepType.FIRST,
             reward=np.array(0.0, dtype=np.float32),
@@ -124,8 +139,7 @@ class V2GEnvironment(PyEnvironment):
                     1,
                     0,
                     -1,
-                    *energy_costs[:12],
-                    energy_cost_intra_day,
+                    *normalized_energy[:12],
                     *self._calculate_vehicle_distribution(),
                     self._parking.get_next_max_charge() / self._parking.get_max_charging_rate() / self._capacity,
                     self._parking.get_next_min_charge() / self._parking.get_max_charging_rate() / self._capacity,
@@ -133,6 +147,7 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
+                    normalized_energy[12],
                 ],
                 dtype=np.float32,
             ),
@@ -165,7 +180,6 @@ class V2GEnvironment(PyEnvironment):
 
                 max_energy = (
                     self._parking.get_next_max_charge() if is_buying else self._parking.get_next_max_discharge()
-
                 )
 
                 new_energy = round(max_energy * charging_coefficient, 2)
@@ -212,7 +226,8 @@ class V2GEnvironment(PyEnvironment):
                 # print(f"Available charge levels: {avg_charge_levels}")
                 # print(f"Degrade rates: {degrade_rates}")
 
-                cost = int(new_energy * current_cost * 100)
+                cost = np.float32(current_cost)
+                # cost = int(new_energy * current_cost * 100)
                 # print(
                 #     f"Charg Coeff: {charging_coefficient}, New E: {new_energy}, Current C: {current_cost},"
                 #     + f" Total: {cost}, Vehicles: {num_of_vehicles}"
@@ -242,7 +257,7 @@ class V2GEnvironment(PyEnvironment):
                 #     )
                 # age_degradation_cost = int(age_degradation_cost * 100)
 
-                reward = int(-cost)
+                reward = -cost
                 # reward = -cost - cycle_degradation_cost - age_degradation_cost
                 # reward = -cost - unmet_demand - cycle_degradation_cost - age_degradation_cost
                 # reward = sigmoid( )
@@ -266,7 +281,7 @@ class V2GEnvironment(PyEnvironment):
                 print(self)
                 raise e
 
-        elif num_of_vehicles == 0:#TODO Deal with 0 vehicles situation
+        elif num_of_vehicles == 0:  # TODO Deal with 0 vehicles situation
             self._charge_list.insert(0, np.float32(0.0))
             if self._next_agent is not None:
                 self._next_agent.collect_step() if self._name == 'train' else self._next_agent.collect_step_eval()
@@ -285,7 +300,8 @@ class V2GEnvironment(PyEnvironment):
 
         # energy_costs = np.ndarray(observation[self._state["time_of_day"]:24], dtype = np.float32)
         energy_costs = np.append(observation[self._state["time_of_day"]:24],
-                                 np.full(max(0, (self._state["time_of_day"] - 12)), 0.))
+                                 np.full(max(0, (self._state["time_of_day"] - 12)),
+                                         -1.0, dtype=np.float32))
 
         # energy_costs.extend(np.full((12 - len(energy_costs),), 0., dtype=np.float32))
         # if self._state["step"] == 24:
@@ -320,17 +336,19 @@ class V2GEnvironment(PyEnvironment):
             else 0
         )
 
+        valid_hours = min(12, 24 - self._state["time_of_day"])
+        normalized_energy = self._normalize_array(list(energy_costs[:valid_hours]) + [energy_cost_intra_day])
+        normalized_energy[valid_hours:valid_hours] = [np.float32(-1.0)] * max(0, (self._state["time_of_day"] - 12))
         return time_step.TimeStep(
             step_type=time_step.StepType.MID if self._state["step"] < 24 else time_step.StepType.LAST,
-            reward=np.array(reward / 100, dtype=np.float32),
+            reward=np.array(reward / 1000, dtype=np.float32),
             discount=np.array(discount, dtype=np.float32),
             observation=np.array(
                 [
                     max_acceptable_coefficient,
                     threshold_coefficient,
                     -min_acceptable_coefficient,
-                    *energy_costs[:12],
-                    energy_cost_intra_day,
+                    *normalized_energy[:12],
                     *self._calculate_vehicle_distribution(),
                     self._parking.get_next_max_charge() / self._parking.get_max_charging_rate() / self._capacity,
                     self._parking.get_next_min_charge() / self._parking.get_max_charging_rate() / self._capacity,
@@ -338,6 +356,7 @@ class V2GEnvironment(PyEnvironment):
                     self._parking.get_next_min_discharge() / self._parking.get_max_discharging_rate() / self._capacity,
                     self._parking.get_charge_mean_priority(),
                     self._parking.get_discharge_mean_priority(),
+                    normalized_energy[12],
                 ],
                 dtype=np.float32,
             ),
@@ -362,13 +381,19 @@ class V2GEnvironment(PyEnvironment):
             return
 
         if self._vehicle_distribution:
-            new_cars = self._vehicle_distribution[self._state["global_step"]]
+            try:
+                new_cars = self._vehicle_distribution[self._state["global_step"]]
+            except IndexError:
+                print("No cars left in distribution. Probably environment was reset one more time than needed.")
+
             try:
                 for total_stay, initial_charge, target_charge in new_cars:
                     v = self._create_vehicle(total_stay, initial_charge, target_charge)
                     self._parking.assign_vehicle(v)
             except ParkingIsFull:
                 print("Parking is full no more cars added")
+            except UnboundLocalError:
+                print("No more cars in vehicle distribution, none added to the Parking")
         else:
             day_coefficient = math.sin(math.pi / 6 * self._state["time_of_day"]) / 2 + 0.5
             new_cars = max(0, int(np.random.normal(10 * day_coefficient, 2 * day_coefficient)))
@@ -381,7 +406,7 @@ class V2GEnvironment(PyEnvironment):
 
     def _create_vehicle(self, total_stay_override=None, initial_charge=None, target_charge=None):
         total_stay = (
-            min(24 - self._state["time_of_day"], random.randint(7, 10))
+            min(25 - self._state["time_of_day"], random.randint(7, 10)) #Changed from 24 to allow cars to leave at 00:00
             if not total_stay_override
             else total_stay_override
         )

@@ -1,6 +1,7 @@
-from typing import List, Tuple
 import datetime
 import random
+from typing import List, Tuple
+import numpy as np
 
 
 class EnergyCurve:
@@ -21,6 +22,7 @@ class EnergyCurve:
         self._x: List[datetime.datetime] = []
         self._raw_y: List[List[Tuple[float, float]]] = [[]]
         self._y: List[Tuple[float, float]] = []
+        self._normalizing_coefficient = 0.0
         with open(dataFile) as csv:
             counter = 0
             for line in csv.readlines():
@@ -28,6 +30,7 @@ class EnergyCurve:
                 date = datetime.datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
                 value = float(value)
                 value_intra_day = float(value_intra_day)
+                self._normalizing_coefficient = max(value, value_intra_day, self._normalizing_coefficient)
                 self._data.append((date, value, value_intra_day))
                 self._x.append(date)
                 if counter == 24:
@@ -78,7 +81,7 @@ class EnergyCurve:
         ### Returns
             float[24] : A 24 size array with the energy cost
         """
-        return [val / (100 if normalized else 1) for val, _ in self._y[self._start:self._end]]
+        return [val / (self._normalizing_coefficient if normalized else 1) for val, _ in self._y[self._start:self._end]]
 
     def get_current_batch_intra_day(self, normalized=True):
         """
@@ -90,7 +93,8 @@ class EnergyCurve:
         ### Returns
             float[24] : A 24 size array with the energy cost
         """
-        return [val / (100 if normalized else 1) for _ ,val in self._y[self._start:self._end]]
+        return [val / (self._normalizing_coefficient if normalized else 1) for _, val in self._y[self._start:self._end]]
+
 
     def get_next_batch(self, normalized=True):
         """
@@ -103,7 +107,7 @@ class EnergyCurve:
         ### Returns
             float[24] : A 24 size array with the energy cost
         """
-        ret = [val / (100 if normalized else 1) for val, _ in self._y[self._start:self._end]]
+        ret = [val / (self._normalizing_coefficient if normalized else 1) for val, _ in self._y[self._start:self._end]]
         if len(self._data) > self._end:
             self._start += 1
             self._end += 1
@@ -123,7 +127,7 @@ class EnergyCurve:
         ### Returns
             float[24] : A 24 size array with the energy cost
         """
-        ret = [val / (100 if normalized else 1) for _ ,val in self._y[self._start:self._end]]
+        ret = [val / (self._normalizing_coefficient if normalized else 1) for _, val in self._y[self._start:self._end]]
         if len(self._data) > self._end:
             self._start += 1
             self._end += 1
@@ -139,7 +143,6 @@ class EnergyCurve:
             self._end += 24
         else:
             self.reset()
-
 
     def reset(self):
         self._start = 0
@@ -157,8 +160,6 @@ class EnergyCurve:
         Get current energy cost
         """
         return self._y[self._start - 1][1]
-
-
 
     def randomize_data(self, is_eval):
         if is_eval:

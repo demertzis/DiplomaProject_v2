@@ -20,7 +20,6 @@ class SmartCharger:
             return PolicyStep(action=tf.constant(np.array([self.actions_length - 1], dtype=np.int32)))
 
         good_price = current_price < self.threshold
-        coefficient = threshold_coefficient
 
         coefficient = threshold_coefficient
         if good_price:
