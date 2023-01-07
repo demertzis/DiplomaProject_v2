@@ -30,10 +30,11 @@ register(
         'reward_function': 0
     }
 )
+
 market_env_train = gym.make('PowerTrain-v0')
 market_env_eval = gym.make('PowerEval-v0')
-market_env_train.reset()
-market_env_eval.reset()
+# market_env_train.reset()
+# market_env_eval.reset()
 
 vehicles = create_vehicle_distribution()
 
@@ -43,16 +44,13 @@ agent_list: List[DQNPolicy] = []
 # garage_env_list = List[V2GEnvironment] = []
 for _ in range(NUMBER_OF_AGENTS):
     next_agent = agent_list[0] if len(agent_list) > 0 else None
-    train_env = V2GEnvironment(capacity=100, name="train", power_market_env=market_env_train, next_agent=next_agent,
+    train_env = V2GEnvironment(capacity=100, mode="train", name="Train_Env_" + str(NUMBER_OF_AGENTS -_), power_market_env=market_env_train, next_agent=next_agent,
                                charge_list=charge_list)
-    eval_env = V2GEnvironment(capacity=200, name='eval', vehicle_distribution=vehicles, power_market_env=market_env_eval,
+    eval_env = V2GEnvironment(capacity=200, mode='eval', name="Eval_Env_" + str(NUMBER_OF_AGENTS - _), vehicle_distribution=vehicles, power_market_env=market_env_eval,
                               next_agent=next_agent, charge_list=charge_list)
 
-    new_agent = DQNPolicy(train_env, eval_env, charge_list=charge_list)
+    new_agent = DQNPolicy(train_env, eval_env, name="Agent_" + str(NUMBER_OF_AGENTS - _), charge_list=charge_list, model_dir='pretrained_networks/model.keras')
 
     agent_list.insert(0, new_agent)
 
 agent_list[0].train()
-
-# energy_curve_2 = energy.EnergyCurve('data/GR-data-11-20.csv', 'train')
-print(energy_curve[:5])

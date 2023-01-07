@@ -26,7 +26,8 @@ class V2GEnvironment(PyEnvironment):
 
     def __init__(self,
                  capacity: int,
-                 name: str,
+                 mode: str,
+                 name: str = "Default_Garage",
                  vehicle_distribution: List[List[int]] = None,
                  # energy_curve: EnergyCurve = None,
                  power_market_env: PowerMarketEnv = None,
@@ -45,7 +46,9 @@ class V2GEnvironment(PyEnvironment):
             observation=self._observation_spec,
         )
         self._power_market_env = power_market_env
+        self._mode = mode
         self._name = name
+
         self._state = {
             "time_of_day": 0,
             "step": 0,
@@ -69,7 +72,6 @@ class V2GEnvironment(PyEnvironment):
         self._vehicle_distribution = vehicle_distribution
         self._next_agent: Any = next_agent
         self._charge_list: List[np.float32] = charge_list
-
     def get_metrics(self):
         return self._state["metrics"]
 
@@ -115,6 +117,7 @@ class V2GEnvironment(PyEnvironment):
 
 
     def _reset(self) -> time_step.TimeStep:
+        # print("hi " + self._name)
         self._state["time_of_day"] = 0
         self._state["step"] = 0
 
@@ -160,6 +163,10 @@ class V2GEnvironment(PyEnvironment):
         # print(max_coefficient, threshold_coefficient, min_coefficient, step)
         charging_coefficient = round(idx * step + min_coefficient, 4)
 
+        # if charging_coefficient < 0:
+        #     # print("")
+        #     ...
+
         is_charging = charging_coefficient > threshold_coefficient
         is_buying = charging_coefficient > 0
 
@@ -186,10 +193,10 @@ class V2GEnvironment(PyEnvironment):
 
                 self._charge_list.insert(0, np.float32(new_energy))
                 if self._next_agent is not None:
-                    # if self._name == 'eval':
+                    # if self._mode == 'eval':
                     # self._next_agent.eval_env.step()
 
-                    self._next_agent.collect_step() if self._name == 'train' else self._next_agent.collect_step_eval()
+                    self._next_agent.collect_step() if self._mode == 'train' else self._next_agent.collect_step(False)
                     # self._next_agent._train()
                     # self._next_agent.train_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
                     # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
@@ -284,7 +291,7 @@ class V2GEnvironment(PyEnvironment):
         elif num_of_vehicles == 0:  # TODO Deal with 0 vehicles situation
             self._charge_list.insert(0, np.float32(0.0))
             if self._next_agent is not None:
-                self._next_agent.collect_step() if self._name == 'train' else self._next_agent.collect_step_eval()
+                self._next_agent.collect_step() if self._mode == 'train' else self._next_agent.collect_step(False)
                 # self._next_agent.train_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
                 # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
 
@@ -339,6 +346,8 @@ class V2GEnvironment(PyEnvironment):
         valid_hours = min(12, 24 - self._state["time_of_day"])
         normalized_energy = self._normalize_array(list(energy_costs[:valid_hours]) + [energy_cost_intra_day])
         normalized_energy[valid_hours:valid_hours] = [np.float32(-1.0)] * max(0, (self._state["time_of_day"] - 12))
+        if done and self._state["step"] < 24:
+            raise ValueError
         return time_step.TimeStep(
             step_type=time_step.StepType.MID if self._state["step"] < 24 else time_step.StepType.LAST,
             reward=np.array(reward / 1000, dtype=np.float32),
@@ -415,7 +424,7 @@ class V2GEnvironment(PyEnvironment):
         initial_charge = initial_charge or round(6 + random.random() * 20, 2)
         target_charge = target_charge or round(34 + random.random() * 20, 2)
 
-        return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge, self._name)
+        return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge, self._mode)
 
     # def cycle_degradation(self, c_rate):
     #     return 5e-5 * c_rate + 1.8e-5
@@ -432,7 +441,7 @@ class V2GEnvironment(PyEnvironment):
     #     return (0.09 * soc + 0.02) / 900 / 24
 
     def toJson(self) -> Dict[str, Any]:
-        return {"name": self._name, "parking": self._parking.toJson()}
+        return {"name": self._mode, "parking": self._parking.toJson()}
 
     def __repr__(self) -> str:
         return json.dumps(self.toJson(), indent=4)

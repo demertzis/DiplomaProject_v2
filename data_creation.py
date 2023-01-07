@@ -1,3 +1,5 @@
+from functools import reduce
+from itertools import accumulate
 from typing import List
 
 import gym
@@ -56,9 +58,9 @@ for i in range(10):
         Creates an extrapolation of state action values based on the fact that according to the "smart policy" a
         particular action is chosen, which means that it should have the highest value. Extrapolates the other values
         considering a gaussian distribution which is maximized at the value of the state action chosen and has a
-        standard deviation of 20 (hear the x values of the distribution are the differenta actions (0 - 21)
+        standard deviation of 1 (hear the x values of the distribution are the differenta actions (0 - 21)
         """
-        gaussian = lambda x: value * np.exp(-0.5 * (x - action_num) ** 2 / (2 * 20 ** 2))
+        gaussian = lambda x: min(0, 2*value) + abs(value) * np.exp(-1.0 * (x - action_num) ** 2 / (2 * 1 ** 2))
         return [np.float32(gaussian(x)) for x in range(21)]
 
 
@@ -66,28 +68,25 @@ for i in range(10):
         observation = time_step.observation.numpy()[0]
         action_step = policy.action(time_step)
         action_num = int(action_step.action)
-
         # create rough (very) estimate of value of different actions based on the fact that action_num was taken
         action_array = np.array([0] * (action_num) + [1] + [0] * (20 - action_num))
         data_line = np.array(np.append(observation, action_array), dtype=np.float32, ndmin=2)
         data = np.append(data, data_line, axis=0)
         time_step = env.step(action_step.action)
-        #TODO deal with the accumulation of rewards (check if signs are correct and consider decay factor)
+        # TODO deal with the accumulation of rewards (check if signs are correct and consider decay factor)
         reward_list.append(time_step.reward.numpy()[0])
         if time_step.is_last():
-            total_reward = sum(reward_list)
+            total_reward = reduce(lambda x, y: (x[0] + 0.9 * x[1] * y, 0.9 * x[1]), reward_list, (0, 1 / 0.9))[0]
+            current_sum = accumulate(reward_list, lambda x, y: (x - y) / 0.9, initial=total_reward)
             for i in range(24):
-                gaussian_values = create_gaussian_outputs(np.nonzero(data[-24 + i][34:55])[-1][-1], total_reward)
+                gaussian_values = create_gaussian_outputs(np.nonzero(data[-24 + i][34:55])[-1][-1], next(current_sum))
                 data[-24 + i][34:55] = gaussian_values
-                # for j in range(21):
-                #     data[-24 + i][34 + j] = gaussian_values[j]
-                total_reward -= reward_list[i]
             reward_list.clear()
             time_step = env.reset()
 
         charge_list.clear()
 
-    with open("colab_data.csv", "a") as file:
+    with open("colab_data_with_decay_2.csv", "a") as file:
         np.savetxt(file, data, delimiter=',')
         # data.savetxt(file, sep=',')
 
