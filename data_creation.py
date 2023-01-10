@@ -34,7 +34,7 @@ for i in range(10):
 
     charge_list: List[np.float32] = []
 
-    env = V2GEnvironment(capacity=200, name='eval', vehicle_distribution=vehicles, power_market_env=market_env_eval,
+    env = V2GEnvironment(capacity=200, name='Garage', mode="eval", vehicle_distribution=vehicles, power_market_env=market_env_eval,
                          next_agent=None, charge_list=charge_list)
 
     # file = open("colab_data.csv", "w")

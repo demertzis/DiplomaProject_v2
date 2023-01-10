@@ -36,7 +36,7 @@ market_env_eval = gym.make('PowerEval-v0')
 # market_env_train.reset()
 # market_env_eval.reset()
 
-vehicles = create_vehicle_distribution()
+vehicles = create_vehicle_distribution()#TODO make vehicles a new class inherited from list with method to return avg
 
 charge_list: List[np.float32] = []
 agent_list: List[DQNPolicy] = []
@@ -52,5 +52,9 @@ for _ in range(NUMBER_OF_AGENTS):
     new_agent = DQNPolicy(train_env, eval_env, name="Agent_" + str(NUMBER_OF_AGENTS - _), charge_list=charge_list, model_dir='pretrained_networks/model.keras')
 
     agent_list.insert(0, new_agent)
+
+# market_env_train.change_reward_function(1)
+# market_env_eval.change_reward_function(1)
+
 
 agent_list[0].train()

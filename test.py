@@ -25,3 +25,5 @@ var2.charge_list.charge_list = [12,2,3]
 
 var2.print_list()
 var3.print_list()
+
+

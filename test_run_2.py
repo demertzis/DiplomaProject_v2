@@ -37,9 +37,9 @@ vehicles = create_vehicle_distribution()
 
 charge_list: List[np.float32] = []
 # garage_env_list = List[V2GEnvironment] = []
-train_env = V2GEnvironment(capacity=100, name="train", power_market_env=market_env_train, next_agent=None,
+train_env = V2GEnvironment(capacity=100, name="Train_Garage", mode="train", power_market_env=market_env_train, next_agent=None,
                            charge_list=charge_list)
-eval_env = V2GEnvironment(capacity=200, name='eval', vehicle_distribution=vehicles, power_market_env=market_env_eval,
+eval_env = V2GEnvironment(capacity=200, name='Eval_Garage', mode="eval", vehicle_distribution=vehicles, power_market_env=market_env_eval,
                           next_agent=None, charge_list=charge_list)
 
 new_agent = DQNPolicy(train_env, eval_env,  charge_list=charge_list, model_dir='pretrained_networks/model.keras')

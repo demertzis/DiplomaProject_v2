@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function, annotations
 
 import sys
+from functools import reduce
 from typing import List
 
 import numpy as np
@@ -14,7 +15,10 @@ from tf_agents.utils import common
 from app.abstract.ddqn import DDQNPolicy
 # from app.abstract.utils import compute_avg_return
 from app.models.garage_env import V2GEnvironment
-from config import NUMBER_OF_AGENTS
+# from config import NUMBER_OF_AGENTS
+from app.policies.smart_charger import  SmartCharger
+
+from config import GARAGE_LIST, NUMBER_OF_AGENTS
 
 
 class DQNPolicy(DDQNPolicy):
@@ -45,6 +49,7 @@ class DQNPolicy(DDQNPolicy):
         self._loss = []
         self._i = 0
         self._policy = None
+        # self.test_policy = SmartCharger(0.5) #used to check if pretrained networks word as intended
         self._next_agent = train_env.next_agent()
         self._charge_list = charge_list
         # self._eval_time_step = None
@@ -104,6 +109,8 @@ class DQNPolicy(DDQNPolicy):
     def next_agent(self):
         return self._next_agent
 
+    # def commonize(self, function)
+
     # def train_reset(self):
     #     # Override the current implementation of the train function
     #
@@ -139,24 +146,29 @@ class DQNPolicy(DDQNPolicy):
 
         self.trickle_down('train_env.reset()',
                           'eval_env.reset()',
-                          'set_policy()'
+                          'set_policy()',
+                          'commonize_train()',
                           )
-        next_agent = self
-        while next_agent != None:
-            # next_agent._policy = DummyV2G(0.5)
-            next_agent.agent.train = common.function(next_agent.agent.train)
-            next_agent = next_agent.next_agent()
+        # next_agent = self
+        # while next_agent != None:
+        #     # next_agent._policy = DummyV2G(0.5)
+        #     next_agent.agent.train = common.function(next_agent.agent.train)
+        #     next_agent = next_agent.next_agent()
 
         print("Collect Step")
+
+        self.compute_eval_list()
 
         self.collect_data(self.initial_collect_steps)
 
         self._i = 0
 
+
         for _ in range(self.num_iterations):
+            # self.trickle_down("raw_train_env.update_garage_list()")
             self.collect_data(1)  # was used in _step method
             self.trickle_down("_train_step()")
-            # next_agent = self
+            # next_agent = selfupdate_garage_list()
             # while next_agent != None:
             #     next_agent._train_step()
             #     next_agent = next_agent.next_agent()
@@ -196,7 +208,7 @@ class DQNPolicy(DDQNPolicy):
                 sys.stdout.write("\r")
                 sys.stdout.write("\033[K")
                 sys.stdout.write(f'[{"=" * percentage + " " * (70 - percentage)}] self._loss: {train_loss} ')
-                sys.stdout.flush()
+                sys.stdout.flush()  # TODO denote agent's name
 
             if step % self.eval_interval == 0:
                 # avg_return = self.compute_avg_return(self.num_eval_episodes)
@@ -208,11 +220,13 @@ class DQNPolicy(DDQNPolicy):
                     "Epoch: {0}/{1} step = {2}: Average Return (Average per day and per agent) = {3}".format(epoch,
                                                                                                              total_epochs,
                                                                                                              step,
-                                                                                                             avg_return)
+                                                                                                             self.compute_avg_agent_loss())
                 )
-                self._returns.append(avg_return)
+                # self._returns.append(avg_return)
+                # self._returns.append(self.fold_eval_list)
                 # metrics_visualization(self.raw_eval_env.get_metrics(), (i + 1) // self.eval_interval, "dqn")
                 self.trickle_down("raw_eval_env.hard_reset()")
+                # self.raw_eval_env.hard_reset()
                 # next_agent = self
                 # while next_agent is not None:
                 #     self.raw_eval_env.hard_reset()  # TODO check if it's ok
@@ -238,28 +252,40 @@ class DQNPolicy(DDQNPolicy):
     #     self._eval_time_step = self.eval_env.step(action_step.action)
     #     self._episode_return_eval += self._eval_time_step.reward
 
-    def set_policy(self, policy = None):
-        self._policy = self.agent.collect_policy if policy == None else policy
+    def fold_eval_list(self):
+        return reduce(lambda x, y: x + reduce(lambda z, w: z + w, y, 0), self._eval_returns, 0) \
+            / self.num_eval_episodes
+
+    def compute_avg_agent_loss(self):
+        next_agent = self
+        sum = 0
+        while next_agent is not None:
+            ret = next_agent.fold_eval_list()
+            next_agent._returns.append(ret)
+            sum += ret
+            next_agent = next_agent.next_agent()
+        return sum / NUMBER_OF_AGENTS
+
+    def commonize_train(self):
+        self.agent.train = common.function(self.agent.train)
+
+    def set_policy(self, policy=None):
+        self._policy = self.agent.collect_policy if policy is None else policy
+
     def extend_eval_list(self):
         self._eval_returns.append([])
 
-
     def compute_eval_list(self, num_episodes=10):
         self.trickle_down('_eval_returns.clear()')
-
         for _ in range(num_episodes):
             self.trickle_down('extend_eval_list()',
                               'eval_env.reset()'
                               )
-
             while not self.eval_env.current_time_step().is_last():
                 self._charge_list.clear()
+                GARAGE_LIST.clear()
                 self.collect_step(False)
-
-
-
         self.trickle_down('raw_eval_env.hard_reset()')
-
 
     # def compute_avg_return(self, num_episodes=10):#TODO housework
     #     # total_return = 0.0
@@ -313,32 +339,25 @@ class DQNPolicy(DDQNPolicy):
     def collect_step(self, train_mode=True):
         (env, policy) = (self.train_env, self._policy) if train_mode else (self.eval_env, self.agent.policy)
         time_step = env.current_time_step()
+
         action_step = policy.action(time_step)
         next_time_step = env.step(action_step.action)
         if train_mode:
             traj = trajectory.from_transition(time_step, action_step, next_time_step)
-            # if next_time_step.is_last():
-            #     env.reset()
-            # Add trajectory to the replay buffer
             self.replay_buffer.add_batch(traj)
         else:
-            # return next_time_step.reward
-            self._eval_returns[-1].append(next_time_step.reward)
+            self._eval_returns[-1].append(next_time_step.reward.numpy()[-1])  #Decide on leaving tensors
 
     def collect_data(self, steps):
         for _ in range(steps):
             # Always clearing the action-list, that will be filled with all agents actions for the market env.
             self._charge_list.clear()
+            GARAGE_LIST.clear()
             self.collect_step()
             if self.train_env.current_time_step().is_last():
                 self.trickle_down("train_env.reset()")
 
-    def test_class(self):
-        print("hi" + self._name)
-
-    #function that takes as arguments methods (maybe nested) without arguments and aply's it to all agents under current
-    #agent
-    def trickle_down(self, *args):#TODO Do something about new values
+    def trickle_down(self, *args):  # TODO Do something about new values
         """
         trickles down methods (without arguments) to all agents under current agent. Args has to be given as strings.
         Example:
@@ -352,3 +371,22 @@ class DQNPolicy(DDQNPolicy):
                 for x in func.split('.'):
                     action = getattr(action, x[0:-2])() if x[-1] == ')' else getattr(action, x)
             next_agent = next_agent.next_agent()
+
+    # def trickle_down(self, *args):  # TODO Do something about new values
+    #     """
+    #     trickles down methods (without arguments) to all agents under current agent. Args has to be given as strings.
+    #     Example:
+    #         self.trickle_down('eval_env.reset()',
+    #                           'train_env.reset())
+    #     """
+    #     next_agent = self
+    #     while next_agent != None:
+    #         for func in args:
+    #             action = next_agent
+    #             for x in func.split('.'):
+    #                 new_args =
+    #                 for y in x.split(')'):
+    #                     new_args.append(y.split('(')[1])
+    #
+    #                 action = getattr(action, x[0:-2])() if x[-1] == ')' else getattr(action, x)
+    #         next_agent = next_agent.next_agent()

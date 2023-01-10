@@ -34,6 +34,12 @@ class Parking:
         self._capacity = capacity
         self.name = name
 
+    def get_current_vehicles(self):
+        """
+        Get current amount of vehicles in parking
+        """
+        return len(self._vehicles)
+
     def get_capacity(self):
         """
         Get capacity of parking

@@ -19,7 +19,7 @@ func_dict = {0: rf.vanilla,
 
 class PowerMarketEnv(TradingEnv):
 
-    def __init__(self, energy_curve: EnergyCurve, reward_function, agents=NUMBER_OF_AGENTS):
+    def __init__(self, energy_curve: EnergyCurve, reward_function = 0, agents=NUMBER_OF_AGENTS):
 
         self.window_size = 0
         self.frame_bound = (0, 23)
@@ -55,6 +55,17 @@ class PowerMarketEnv(TradingEnv):
 
         self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self._number_agents,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(25,), dtype=np.float32)
+
+    def change_reward_function(self, reward_function: int):
+        try:
+            self.reward_function = func_dict[reward_function]
+        except Exception:
+            print("Argument doesn't match any function. Insert integer in the range 0 -> 4")
+            return
+        else:
+            return
+
+
     def hard_reset(self):
         self._energy_curve.reset()
         self._episode_count = 0

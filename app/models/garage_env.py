@@ -10,7 +10,8 @@ from tf_agents.environments.py_environment import PyEnvironment
 from tf_agents.specs import array_spec
 from tf_agents.trajectories import time_step
 
-import config
+from config import GARAGE_LIST, BATTERY_CAPACITY, AVG_CHARGING_RATE
+
 from app.error_handling import ParkingIsFull
 from app.models.parking import Parking
 from app.models.power_market_env import PowerMarketEnv
@@ -22,7 +23,7 @@ class V2GEnvironment(PyEnvironment):
     _precision = 10
     _length = _precision * 2 + 1
     _battery_cost = 120
-    _battery_capacity = config.BATTERY_CAPACITY
+    _battery_capacity = BATTERY_CAPACITY
 
     def __init__(self,
                  capacity: int,
@@ -68,12 +69,22 @@ class V2GEnvironment(PyEnvironment):
         }
         self._capacity = capacity
         self._parking = Parking(capacity, name)
+        self._avg_vehicles_list = [0.0] * 24
         # self._energy_curve = energy_curve
         self._vehicle_distribution = vehicle_distribution
         self._next_agent: Any = next_agent
         self._charge_list: List[np.float32] = charge_list
+
     def get_metrics(self):
         return self._state["metrics"]
+
+    def _update_avg_demand_list(self): #TODO implement way to calculate expected consumption at given time
+        episodes = int(self._state["global_step"] / 24)
+        self._avg_vehicles_list[self._state["time_of_day"]] = self._parking.get_current_vehicles() / \
+                                                             (episodes + 1) + \
+                                                             self._avg_vehicles_list[self._state["time_of_day"]] * \
+                                                             (episodes / (episodes +1))
+        GARAGE_LIST.append(self._avg_vehicles_list[self._state["time_of_day"]] * AVG_CHARGING_RATE )
 
     def next_agent(self):
         return self._next_agent
@@ -114,6 +125,7 @@ class V2GEnvironment(PyEnvironment):
         self._power_market_env.hard_reset()
         # self._energy_curve.reset()
         self.reset_metrics()
+        self._avg_vehicles_list = [0.0] * 24
 
 
     def _reset(self) -> time_step.TimeStep:
@@ -180,6 +192,8 @@ class V2GEnvironment(PyEnvironment):
         self._state["metrics"]["num_of_vehicles"].append(num_of_vehicles)
         self._state["metrics"]["actions"].append(idx)
         self._state["metrics"]["charging_coefficient"].append(charging_coefficient)
+        
+        self._update_avg_demand_list()
 
         if num_of_vehicles != 0:
             try:
@@ -375,7 +389,6 @@ class V2GEnvironment(PyEnvironment):
         vehicle_departure_distribution = [0 for _ in range(12)]
         for v in self._parking._vehicles:
             vehicle_departure_distribution[v.get_time_before_departure() - 1] += 1
-
         currentFreq = 0
         length = len(vehicle_departure_distribution)
         for i, f in enumerate(reversed(vehicle_departure_distribution)):
@@ -415,7 +428,7 @@ class V2GEnvironment(PyEnvironment):
 
     def _create_vehicle(self, total_stay_override=None, initial_charge=None, target_charge=None):
         total_stay = (
-            min(25 - self._state["time_of_day"], random.randint(7, 10)) #Changed from 24 to allow cars to leave at 00:00
+            min(24 - self._state["time_of_day"], random.randint(7, 10)) #Changed from 24 to allow cars to leave at 00:00
             if not total_stay_override
             else total_stay_override
         )

@@ -90,7 +90,7 @@ class Vehicle:
             current_charge (``float``):
                 description: The current charge of the vehicle's battery
             time_before_departure (``int``):
-                description: The total hours remaining before departure
+                description: The total hours remaining before departurep
 
         ### Returns:
             float : The next max charge
