@@ -1,22 +1,24 @@
 from __future__ import absolute_import, division, print_function
 
+import sys
+
 import tensorflow as tf
-
-# !!! Change this, if folder structure is different !!!
-from app.abstract.utils import compute_avg_return
-
 from tensorflow import keras
 from tf_agents.agents.dqn import dqn_agent
 from tf_agents.environments import tf_py_environment
 from tf_agents.environments.py_environment import PyEnvironment
 from tf_agents.networks import sequential
-from tf_agents.replay_buffers import tf_uniform_replay_buffer
-from tf_agents.utils import common
 from tf_agents.policies import random_tf_policy
+from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.trajectories import trajectory
+from tf_agents.utils import common
 
-import sys
+from tf_prioritized_replay_buffer import TFPrioritizedReplayBuffer
 
+from app.abstract.utils import MyCheckpointer
+
+# !!! Change this, if folder structure is different !!!
+from app.abstract.utils import compute_avg_return
 
 class DDQNPolicy:
     """
@@ -58,13 +60,16 @@ class DDQNPolicy:
     learning_rate = 1e-4  # @param {type:"number"}
     train_dir = "checkpoints"  # the checkpoint folder
 
-    def __init__(self, train_env: PyEnvironment, eval_env: PyEnvironment, q_net: sequential.Sequential):
+    def __init__(self, train_env: PyEnvironment, eval_env: PyEnvironment, q_net: sequential.Sequential,
+                 agent_name: str):
         self.raw_train_env = train_env
         self.raw_eval_env = eval_env
 
         # Transform py environment to tensor environments to increase efficiency
         self.train_env = tf_py_environment.TFPyEnvironment(train_env)
         self.eval_env = tf_py_environment.TFPyEnvironment(eval_env)
+
+        # Changed the checkpoint file structure to have each agent use a different folder
 
         # Set global step counter to 0 (this will be overwritten by reload of the checkpoint)
         self.global_step = tf.Variable(0)
@@ -74,7 +79,8 @@ class DDQNPolicy:
             time_step_spec=self.train_env.time_step_spec(),
             action_spec=self.train_env.action_spec(),
             q_network=q_net,
-            optimizer=keras.optimizers.Adam(learning_rate=self.learning_rate),
+            # optimizer=keras.optimizers.Adam(learning_rate=self.learning_rate,amsgrad=True),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate,amsgrad=True),
             td_errors_loss_fn=common.element_wise_squared_loss,
             train_step_counter=self.global_step,
             target_update_tau=0.001,
@@ -87,17 +93,23 @@ class DDQNPolicy:
         self.collect_policy = self.agent.collect_policy
 
         # Create a replay buffer
-        self.replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+        # self.replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+        #     data_spec=self.agent.collect_data_spec,
+        #     batch_size=self.train_env.batch_size,
+        #     max_length=self.replay_buffer_max_length,
+        # )
+        self.replay_buffer = TFPrioritizedReplayBuffer(
             data_spec=self.agent.collect_data_spec,
             batch_size=self.train_env.batch_size,
             max_length=self.replay_buffer_max_length,
         )
 
+
         # Create a checkpointer instance
         # This is used to save the current state of the policy, agent and replay buffer
-        self.train_checkpointer = common.Checkpointer(
+        self.train_checkpointer = MyCheckpointer(
             ckpt_dir=self.train_dir,
-            max_to_keep=5,
+            max_to_keep=1,
             agent=self.agent,
             policy=self.agent.policy,
             replay_buffer=self.replay_buffer,
@@ -110,11 +122,11 @@ class DDQNPolicy:
 
         # This will restore the agent, policy and replay buffer from the checkpoint, if it exists
         # Or it will just initialize everything to their initial setup
-        self.train_checkpointer.initialize_or_restore()
 
+        self.train_checkpointer.initialize_or_restore()
         # Create a dataset and an iterator instance, this helps to create batches of data in training
         dataset = self.replay_buffer.as_dataset(
-            num_parallel_calls=3, sample_batch_size=self.batch_size, num_steps=2
+            num_parallel_calls=3, sample_batch_size=self.batch_size, num_steps=2,
         ).prefetch(3)
         self.iterator = iter(dataset)
 
@@ -178,8 +190,9 @@ class DDQNPolicy:
                     remainder = step % self.eval_interval
                     # Calculate the percentage of the progress of the current epoch
                     percentage = (
-                        (remainder if remainder != 0 else self.eval_interval) * self.progress_bar_length
-                    ) // self.eval_interval
+                                         (
+                                             remainder if remainder != 0 else self.eval_interval) * self.progress_bar_length
+                                 ) // self.eval_interval
 
                     # Print a progress bar
                     sys.stdout.write("\r")

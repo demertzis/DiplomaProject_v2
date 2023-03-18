@@ -15,3 +15,13 @@ checkpoints/replay_buffer/*
 
 !checkpoints/.gitkeep
 !checkpoints/replay_buffer/.gitkeep
+
+# Generated data for nn colab training
+colab_data.csv
+
+#Generated a random price csv for eval
+make_random_energy.py
+
+#junk files that might be usefull in development
+junk_test_utils.py
+

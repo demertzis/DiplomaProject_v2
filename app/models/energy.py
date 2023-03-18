@@ -71,7 +71,7 @@ class EnergyCurve:
         """
         return self._y
 
-    def get_current_batch(self, normalized=True):
+    def get_current_batch(self, normalized=False):
         """
         Returns the current batch of values
 
@@ -83,7 +83,7 @@ class EnergyCurve:
         """
         return [val / (self._normalizing_coefficient if normalized else 1) for val, _ in self._y[self._start:self._end]]
 
-    def get_current_batch_intra_day(self, normalized=True):
+    def get_current_batch_intra_day(self, normalized=False):
         """
         Returns the current batch of values
 
@@ -96,7 +96,7 @@ class EnergyCurve:
         return [val / (self._normalizing_coefficient if normalized else 1) for _, val in self._y[self._start:self._end]]
 
 
-    def get_next_batch(self, normalized=True):
+    def get_next_batch(self, normalized=False):
         """
         Returns the next batch of values
         Moves window to the next values
@@ -116,7 +116,7 @@ class EnergyCurve:
 
         return ret
 
-    def get_next_batch_intra_day(self, normalized=True):
+    def get_next_batch_intra_day(self, normalized=False):
         """
         Returns the next batch of values
         Moves window to the next values

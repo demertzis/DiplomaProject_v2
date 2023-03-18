@@ -10,9 +10,11 @@ from tf_agents.trajectories.time_step import TimeStep
 
 from app.models.energy import EnergyCurve
 from app.models.garage_env import V2GEnvironment
-from app.policies.smart_charger import SmartCharger
+# from app.policies.smart_charger import SmartCharger
+from app.policies.dummy_v2g import DummyV2G
 from app.utils import create_vehicle_distribution
 
+from config import GARAGE_LIST
 energy_curve_eval = EnergyCurve('data/data_sorted_by_date.csv', 'eval')
 
 register(
@@ -43,7 +45,7 @@ for i in range(10):
 
     env = tf_py_environment.TFPyEnvironment(env)
 
-    policy = SmartCharger(0.5)
+    policy = DummyV2G(0.5)
     # policy = DummyV2G(0.5)
 
     data = np.empty((0, 55), np.float32)
@@ -76,8 +78,10 @@ for i in range(10):
         # TODO deal with the accumulation of rewards (check if signs are correct and consider decay factor)
         reward_list.append(time_step.reward.numpy()[0])
         if time_step.is_last():
-            total_reward = reduce(lambda x, y: (x[0] + 0.9 * x[1] * y, 0.9 * x[1]), reward_list, (0, 1 / 0.9))[0]
-            current_sum = accumulate(reward_list, lambda x, y: (x - y) / 0.9, initial=total_reward)
+            # total_reward = reduce(lambda x, y: (x[0] + 0.9 * x[1] * y, 0.9 * x[1]), reward_list, (0, 1 / 0.9))[0]
+            # current_sum = accumulate(reward_list, lambda x, y: (x - y) / 0.9, initial=total_reward)
+            total_reward = reduce(lambda x, y: x + y, reward_list, 0)
+            current_sum = accumulate(reward_list, lambda x, y: x - y, initial=total_reward)
             for i in range(24):
                 gaussian_values = create_gaussian_outputs(np.nonzero(data[-24 + i][34:55])[-1][-1], next(current_sum))
                 data[-24 + i][34:55] = gaussian_values
@@ -85,8 +89,9 @@ for i in range(10):
             time_step = env.reset()
 
         charge_list.clear()
+        GARAGE_LIST.clear()
 
-    with open("colab_data_with_decay_2.csv", "a") as file:
+    with open("colab_data_without_decay.csv", "a") as file:
         np.savetxt(file, data, delimiter=',')
         # data.savetxt(file, sep=',')
 

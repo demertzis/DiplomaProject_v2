@@ -1,3 +1,4 @@
+import math
 from typing import List
 
 import matplotlib.pyplot as plt
@@ -23,7 +24,7 @@ class PowerMarketEnv(TradingEnv):
 
         self.window_size = 0
         self.frame_bound = (0, 23)
-        self.reward_function = func_dict[reward_function]
+        self._reward_function = func_dict[reward_function]
         self._episode_count = 0
         self._total_episodes = energy_curve.total_episodes()
         self._number_agents = agents
@@ -58,12 +59,15 @@ class PowerMarketEnv(TradingEnv):
 
     def change_reward_function(self, reward_function: int):
         try:
-            self.reward_function = func_dict[reward_function]
+            self._reward_function = func_dict[reward_function]
         except Exception:
             print("Argument doesn't match any function. Insert integer in the range 0 -> 4")
             return
         else:
             return
+
+    def get_reward_func_name(self):
+        return self._reward_function.__name__
 
 
     def hard_reset(self):
@@ -101,7 +105,7 @@ class PowerMarketEnv(TradingEnv):
 
     def _process_data(self):
         # episode_frame = self._episode_count * 24
-        # prices = self._energy_curve.loc[:, 'MCP_DAM'].to_numpy()[episode_frame: episode_frame + 24].astype(np.float32)
+        # AVG_CONSUMPTION()prices = self._energy_curve.loc[:, 'MCP_DAM'].to_numpy()[episode_frame: episode_frame + 24].astype(np.float32)
         prices = self._energy_curve.get_current_batch(normalized=False)
 
         # signal_features = self._energy_curve.loc[:, 'MCP_CRID'].to_numpy()[episode_frame: episode_frame + 24].astype(np.float32)
@@ -143,11 +147,10 @@ class PowerMarketEnv(TradingEnv):
         #     self._agent_identity = 0
         # # self.prices, self.signal_features = self._process_data()
 
-
         return self._get_observation(), agent_reward, self._done, self._info
 
     def _calculate_reward(self, action):
-        return self.reward_function(self.prices, self.signal_features[self._current_tick], self._current_tick, action)
+        return self._reward_function(self.prices, self.signal_features[self._current_tick], self._current_tick, action)
 
     def _update_profit(self, step_reward):
         pass

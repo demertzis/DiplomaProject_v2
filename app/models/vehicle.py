@@ -42,7 +42,7 @@ class Vehicle:
         total_stay: int,
         max_charge: float,
         min_charge: float,
-        name: str,
+        # name: str,
     ):
         self._current_charge = initial_charge
         self._target_charge = target_charge
@@ -51,9 +51,9 @@ class Vehicle:
         self._min_charge = min_charge
         self._charge_priority = 0.0
         self._discharge_priority = 0.0
-        self.name = name
+        # self.name = name
         self._before_charge = 0.0
-        self._changes = []
+        # self._changes = []
 
         self._overcharged_time = 0
         self._original_target_charge = target_charge
@@ -204,10 +204,8 @@ class Vehicle:
             max_curve_area: float = np.trapz(max_curve)
             min_curve_area: float = np.trapz(min_curve)
             diff_curve_area = max_curve_area - min_curve_area
-
             max_intersection = find_intersection_v2(x_axes, max_curve, self._current_charge)
             min_intersection = find_intersection_v2(x_axes, min_curve, self._current_charge)
-
             intersection = max_intersection or min_intersection
 
             if (intersection is None) and (self._current_charge == self._target_charge):
@@ -298,9 +296,9 @@ class Vehicle:
             2,
         )
 
-        avg_charge_level = (self._before_charge + self._current_charge) / 2
-        degrade_rate = round(self._current_charge - self._before_charge, 2)
-        self._changes.append(degrade_rate)
+        # avg_charge_level = (self._before_charge + self._current_charge) / 2
+        # degrade_rate = round(self._current_charge - self._before_charge, 2)
+        # self._changes.append(degrade_rate)
         # if abs(degrade_rate) > 1:
         #     print(self._current_charge, self._before_charge, config.BATTERY_CAPACITY)
         #     print(new_vehicle_energy, residue, residue_energy, charging_coefficient)
@@ -310,15 +308,15 @@ class Vehicle:
         if (self._current_charge / config.BATTERY_CAPACITY) > 0.5:
             self._overcharged_time += 1
 
-        if math.isnan(avg_charge_level) or math.isnan(residue) or math.isnan(self._current_charge):
+        if math.isnan(residue) or math.isnan(self._current_charge):
             print("Warning: NaN values found on vehicle update")
-            print(avg_charge_level, residue, self._current_charge)
+            print(residue, self._current_charge)
             print(priority, next_max_energy, sign, is_charging, charging_coefficient, new_vehicle_energy)
 
         if self._time_before_departure != 0:
             self.update()
 
-        return avg_charge_level, degrade_rate, residue
+        return residue
 
     def update_emergency_demand(self):
         """

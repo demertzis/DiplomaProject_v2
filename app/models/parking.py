@@ -151,15 +151,15 @@ class Parking:
         """
         Filter out all vehicles that have left the parking
         """
-        departed_vehicles = list(filter(lambda v: v.get_time_before_departure() == 0, self._vehicles))
+        # departed_vehicles = list(filter(lambda v: v.get_time_before_departure() == 0, self._vehicles))
         self._vehicles = list(filter(lambda v: v.get_time_before_departure() != 0, self._vehicles))
 
-        overcharged_time = []
-        for v in departed_vehicles:
-            # print("Vehicle with target ", v.get_target_charge(), " and changes ", v._changes)
-            overcharged_time.append(v.get_overchared_time())
+        # overcharged_time = []
+        # for v in departed_vehicles:
+        #     # print("Vehicle with target ", v.get_target_charge(), " and changes ", v._changes)
+        #     overcharged_time.append(v.get_overchared_time())
 
-        return overcharged_time
+        # return overcharged_time
 
     def _update_parking_state(self):
         self._next_max_charge = 0.0
@@ -229,7 +229,7 @@ class Parking:
         priority = Vehicle.get_charge_priority if is_charging else Vehicle.get_discharge_priority
 
         for vehicle in self._vehicles:
-            before = vehicle._current_charge
+            # before = vehicle._current_charge
             vehicle.update_emergency_demand()
             # print("Emergency Demand satisfied: ", vehicle._current_charge - before)
 
@@ -242,24 +242,24 @@ class Parking:
         )
 
         residue = 0.0
-        avg_charge_levels: List[float] = []
-        degrade_rates: List[float] = []
+        # avg_charge_levels: List[float] = []
+        # degrade_rates: List[float] = []
         for vehicle in sorted(
             self._vehicles,
             key=lambda v: sign * charging_coefficient * (1 + priority(v) - normalization_constant),
             reverse=True,
         ):
-            before = vehicle._current_charge
-            avg_charge_level, degrade_rate, residue = vehicle.update_current_charge(
+            # before = vehicle._current_charge
+            residue = vehicle.update_current_charge(
                 charging_coefficient, normalization_constant, residue
             )
             # print("Normal demand satisfied: ", vehicle._current_charge - before)
             # print(vehicle)
             # print(residue)
-            degrade_rates.append(degrade_rate)
-            avg_charge_levels.append(avg_charge_level)
+            # degrade_rates.append(degrade_rate)
+            # avg_charge_levels.append(avg_charge_level)
 
-        return avg_charge_levels, degrade_rates
+        # return avg_charge_levels
 
     def update(self, charging_coefficient):
         """
@@ -269,10 +269,10 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The charging coefficient
         """
-        avg_charge_levels, degrade_rates = self.update_energy_state(charging_coefficient)
-        overcharged_time = self.depart_vehicles()
+        self.update_energy_state(charging_coefficient)
+        self.depart_vehicles()
         self._update_parking_state()
-        return avg_charge_levels, degrade_rates, overcharged_time
+        # return avg_charge_levels, overcharged_time
 
     def toJson(self) -> Dict[str, Any]:
         return {

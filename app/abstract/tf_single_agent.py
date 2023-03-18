@@ -1,0 +1,422 @@
+import math
+import random
+from typing import Callable, Optional, List
+
+import tensorflow as tf
+import numpy as np
+from tf_agents.agents.tf_agent import LossInfo
+from tf_agents.specs import tensor_spec
+from tf_agents.trajectories import trajectory
+from tf_agents.trajectories.policy_step import PolicyStep
+from tf_agents.trajectories.time_step import TimeStep
+from tf_agents.typing import types
+from tf_agents.agents import TFAgent, data_converter
+from tf_agents.utils.common import Checkpointer
+from tf_agents.utils.nest_utils import assert_matching_dtypes_and_inner_shapes
+
+from app.models.tf_utils import my_round
+from app.error_handling import ParkingIsFull
+from app.models.tf_parking_3 import Parking
+from app.models.tf_vehicle_4 import Vehicle, VehicleFields
+from app.utils import tf_vehicle_generator
+
+from config import MAX_BUFFER_SIZE
+
+def create_single_agent(cls: type,
+                        vehicle_distribution: List,
+                        name: str,
+                        num_of_agents: int,
+                        checkpoint_dir: str,
+                        buffer_max_length: int = MAX_BUFFER_SIZE,
+                        capacity_train_garage: int = 100,
+                        capacity_eval_garage: int = 200,
+                        coefficient_function: Callable = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5,
+                        *args,
+                        **kwargs,):
+
+    class_list = [cls]
+    temp = cls
+    while temp.__bases__:
+        class_list.append(temp.__bases__[0])
+        temp = temp.__bases__[0]
+
+    if not any([i == TFAgent for i in class_list]):
+        raise Exception('Provided Class is not TFAgent.'
+                        'Class provided: {}'.format(cls.__class__.__name__))
+
+    class SingleAgent(cls):
+        def __init__(self,
+                     vehicle_distribution: List,
+                     coefficient_function: Callable,
+                     checkpoint_dir: str,
+                     buffer_max_size: int,
+                     capacity_train_garage: int = 100,
+                     capacity_eval_garage: int = 200,
+                     name: str = "DefaultAgent",
+                     *args,
+                     **kwargs):
+
+            self._name = name
+            self._agent_id = int("".join(item for item in list(filter(str.isdigit, name))))
+            if not self._agent_id:
+                raise Exception('Agent name must have an integer'
+                                ' to denote the agents unique id.'
+                                'For example: Agent_1')
+
+            #Parking fields. Can be removed in a different setting
+            self._capacity_train_garage = capacity_train_garage
+            self._capacity_eval_garage = capacity_eval_garage
+            self._train_parking = Parking(self._capacity_train_garage, 'train')
+            self._eval_parking = Parking(self._capacity_eval_garage, 'eval')
+            self._train_vehicle_generator = tf_vehicle_generator(coefficient_function=coefficient_function,
+                                                                      vehicle_list=None)
+            self._eval_vehicle_generator = tf_vehicle_generator(coefficient_function=None,
+                                                                     vehicle_list=vehicle_distribution)
+            self._private_observations = tf.Variable(tf.zeros([buffer_max_size, 21]),
+                                                     shape=[buffer_max_size, 21],
+                                                     dtype=tf.float32,
+                                                     trainable=False)
+            # self._private_observations = tf.TensorArray(tf.float32, size=0, dynamic_size=True, clear_after_read=False)
+            self._private_actions = tf.Variable(tf.zeros([buffer_max_size], tf.int32),
+                                                shape=[buffer_max_size],
+                                                dtype=tf.int32,
+                                                trainable=False)
+            # self._private_actions = tf.TensorArray(tf.int32, size=0, dynamic_size=True, clear_after_read=False)
+            self._private_index = tf.Variable(0, trainable=False)
+            self._buffer_max_size = buffer_max_size
+
+            self.checkpointer = Checkpointer(
+                ckpt_dir=checkpoint_dir + self._name,
+                max_to_keep=1,
+                agent=self,
+            ) #TODO decide on weather it's needed
+            #TODO remove avg vehicle list, there should not be access to global variables
+
+            # self._time_of_day = tf.constant(0, dtype=tf.int32)
+            self._time_of_day = tf.Variable(0, dtype=tf.int32)
+            self._eval_steps = tf.Variable(0, dtype=tf.int32)
+
+            super(cls, self).__init__(*args, **kwargs)
+            self.policy.action = self._action_wrapper(self.policy.action, False)
+            self.collect_policy.action = self._action_wrapper(self.collect_policy.action, True)
+
+            buffer_time_step_spec = TimeStep(
+                    step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.int32, minimum=0, maximum=2),
+                    discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.float32, minimum=0.0, maximum=1.0),
+                    reward=tensor_spec.TensorSpec(shape=(num_of_agents,), dtype=np.float32),
+                    observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=np.float32, minimum=-1., maximum=1.),
+                )
+
+            # buffer_action_spec = tensor_spec.TensorSpec(shape=(num_of_agents,),
+            #                                             dtype=tf.float32)
+            buffer_info_spec = tensor_spec.TensorSpec(shape=(),
+                                                      dtype=tf.int32)
+            self._collect_data_context = data_converter.DataContext(
+                time_step_spec=buffer_time_step_spec,
+                action_spec=(),
+                info_spec=buffer_info_spec,
+            )
+
+        def reset_eval_steps(self):
+            self._eval_steps.assign(0)
+
+        # def _initialize(self):
+        #     self._add_new_cars(train_mode=True)
+        #     self._add_new_cars(train_mode=False)
+        #     super()._initialize()
+
+        def _add_new_cars(self, train_mode=True):  # TODO decide on way to choose between distributions
+            index = self._time_of_day if train_mode else self._eval_steps
+            new_cars = self._train_vehicle_generator(index) if train_mode else self._eval_vehicle_generator(index).to_tensor()
+            for vehicle in new_cars:
+                v = VehicleFields(vehicle[1], vehicle[2], vehicle[0], 60.0, 0.0)
+                if train_mode:
+                    self._train_parking.assign_vehicle(v)
+                    tf.print('train_assign')
+                else:
+                    self._eval_parking.assign_vehicle(v)
+                    tf.print('eval_assign')
+
+        def _train(self, experience: types.NestedTensor,
+                   weights: types.Tensor) -> LossInfo:
+            return super()._train(self.preprocess_sequence(experience), weights)
+
+        def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, collect_mode = True):
+            parking = self._train_parking.return_fields() if collect_mode else self._eval_parking.return_fields()
+            length = tf.constant((21.0), dtype=tf.float32)
+            max_coefficient = observation[..., 13]
+            threshold_coefficient = observation[..., 14]
+            min_coefficient =observation[..., 15]
+            step = (max_coefficient - min_coefficient) / (length-1.0)
+            charging_coefficient = tf.cast(action_step, dtype=tf.float32) * step + min_coefficient
+            charging_coefficient = my_round(charging_coefficient, 4)
+            is_charging = tf.less_equal(threshold_coefficient, charging_coefficient)
+            is_buying = tf.less_equal(tf.constant(0.0), charging_coefficient)
+            max_energy = parking.next_max_charge if is_buying else parking.next_max_discharge
+            new_energy = my_round(max_energy * charging_coefficient, 2)
+
+            self._update_parking(collect_mode,
+                                 is_charging,
+                                 new_energy,
+                                 charging_coefficient,
+                                 threshold_coefficient)
+            return new_energy
+
+        # def _action_wrapper(self, action, collect=True):
+        #     """
+        #     Wraps the action method of a policy to allow it to consume
+        #     timesteps from the single buffer, augmenting the observation
+        #     with the saved garage state (or not if it's called during training)
+        #     """
+        #     def wrapped_action(time_step: TimeStep,
+        #                        policy_state: types.NestedTensor = (),
+        #                        seed: Optional[types.Seed] = None,) -> PolicyStep:
+        #         train_mode = True
+        #         try:
+        #             assert_matching_dtypes_and_inner_shapes(time_step,
+        #                                                     self._time_step_spec,
+        #                                                     allow_extra_fields=True,
+        #                                                     caller=self,
+        #                                                     tensors_name="`experience`",
+        #                                                     specs_name="`train_argspec`")
+        #         except ValueError:
+        #             parking_obs = tf.reshape(self._get_parking_observation(collect), [-1,21])
+        #             augmented_obs = tf.concat(
+        #                 (time_step.observation,
+        #                 parking_obs),
+        #                 -1,
+        #             )
+        #             new_time_step = time_step._replace(observation=augmented_obs)
+        #             step = action(
+        #                 new_time_step,
+        #                 policy_state,
+        #                 seed,)
+        #             load = self._get_load(step.action, tf.squeeze(augmented_obs), collect)
+        #             tf.cond(time_step.is_last(),
+        #                     lambda: self._time_of_day.assign(0),
+        #                     lambda: self._time_of_day.assign_add(1))
+        #             if collect == False:
+        #                 tf.cond(time_step.is_last(),
+        #                         lambda: self._eval_steps.assign_add(0),
+        #                         lambda: self._eval_steps.assign_add(1))
+        #             if self._time_of_day <= 24:
+        #                 self._add_new_cars(collect)
+        #             # tf.cond(tf.less_equal(self._time_of_day, 24),
+        #             #         lambda: self._add_new_cars(collect),
+        #             #         lambda: tf.no_op())
+        #             # self._private_observations = tf.cond(time_step.is_last(),
+        #             #                                      lambda: self._private_observations,
+        #             #                                      lambda: self._private_observations.write(
+        #             #                                          self._private_observations.size(),
+        #             #                                          parking_obs))
+        #             # if not time_step.is_last:
+        #             #     self._private_observations =
+        #             if ~time_step.is_last():
+        #                 time_step_batch_size = tf.shape(time_step)[0]
+        #                 indices_tensor =
+        #
+        #             self._private_actions = tf.cond(time_step.is_last(),
+        #                                             lambda: self._private_actions,
+        #                                             lambda: self._private_actions.write(
+        #                                                 self._private_actions.size(),
+        #                                                 tf.squeeze(step.action)))
+        #             return step.replace(action=tf.cond(tf.equal(tf.rank(tf.squeeze(load)), 0),
+        #                                                lambda: tf.expand_dims(tf.squeeze(load), 0),
+        #                                                lambda: tf.squeeze(load)))
+        #         else:
+        #             return action(time_step, policy_state, seed)
+        #
+        #     return wrapped_action
+
+        def _action_wrapper(self, action, collect=True):
+            """
+            Wraps the action method of a policy to allow it to consume
+            timesteps from the single buffer, augmenting the observation
+            with the saved garage state (or not if it's called during training)
+            """
+            def wrapped_action_eval(time_step: TimeStep,
+                               policy_state: types.NestedTensor = (),
+                               seed: Optional[types.Seed] = None,) -> PolicyStep:
+                if ~time_step.is_last():
+                    self._add_new_cars(False)
+                    self._eval_steps.assign_add(1)
+                parking_obs = tf.reshape(self._get_parking_observation(False),
+                                         [-1,21])
+                augmented_obs = tf.concat((time_step.observation,
+                                           parking_obs),
+                                          -1)
+                reward = time_step.reward[..., self._agent_id - 1]
+                new_time_step = time_step._replace(observation=augmented_obs,
+                                                   reward=reward)
+                step = action(
+                    new_time_step,
+                    policy_state,
+                    seed,)
+                load = self._get_load(tf.squeeze(step.action),
+                                      tf.squeeze(augmented_obs),
+                                      False)
+                load = tf.reshape(load, [1, -1])
+                return step.replace(action=load)
+
+
+            def wrapped_action_collect(time_step: TimeStep,
+                               policy_state: types.NestedTensor = (),
+                               seed: Optional[types.Seed] = None,) -> PolicyStep:
+                if ~time_step.is_last():
+                    self._add_new_cars(True)
+                    self._time_of_day.assign_add(1)
+                else:
+                    self._time_of_day.assign(0)
+                parking_obs = tf.reshape(self._get_parking_observation(True),
+                                         [-1,21])
+                augmented_obs = tf.concat(
+                    (time_step.observation,
+                    parking_obs),
+                    -1,)
+                reward = time_step.reward[..., self._agent_id - 1]
+                new_time_step = time_step._replace(observation=augmented_obs,
+                                                   reward=reward)
+                step = action(new_time_step,
+                              policy_state,
+                              seed,)
+                time_step_batch_size = tf.shape(time_step.observation)[0]
+                indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
+                                             self._private_index) %
+                                            self._buffer_max_size,
+                                            [-1, 1])
+                self._private_index.assign_add(time_step_batch_size)
+                self._private_observations.scatter_nd_update(indices_tensor, parking_obs)
+                self._private_actions.scatter_nd_update(indices_tensor, step.action)
+                load = self._get_load(tf.squeeze(step.action),
+                                      tf.squeeze(augmented_obs),
+                                      True)
+                load = tf.reshape(load, [1, -1])
+                return step.replace(action=load)
+
+            return wrapped_action_collect if collect else wrapped_action_eval
+
+
+        def _preprocess_sequence(self, experience: trajectory.Trajectory):
+            """
+            Trajectories from the buffer contain just the market environment data
+            (prices), also the reward and action of every agent. Augments observation
+            with parking state, also, trims the unnecessary rewards and actions and
+            removes the policy info (which is used to fetch the parking state from
+            the agents field _private_observations)
+            """
+            parking_obs = tf.gather(self._private_observations.stack(), experience.policy_info)
+            actions = tf.gather(self._private_actions.stack(), experience.policy_info)
+            augmented_obs = tf.concat(
+                (experience.observation,
+                 parking_obs),
+                axis=tf.rank(parking_obs) - 1
+            )
+            agent_reward = experience.reward[..., self._agent_id - 1]
+            # agent_action = experience.action[..., self._agent_id - 1:self._agent_id]
+            return experience.replace(observation=augmented_obs,
+                                      policy_info=(),
+                                      reward=agent_reward,
+                                      action=actions,)
+
+        def _calculate_vehicle_distribution(self, train: tf.Tensor):
+            departure_tensor = tf.cond(tf.constant(train),
+                                       lambda: self._train_parking.vehicles,
+                                       lambda: self._eval_parking.vehicles)
+            capacity = tf.cond(tf.constant(train),
+                               lambda: self._capacity_train_garage,
+                               lambda: self._capacity_eval_garage)
+            departure_tensor = tf.cast(tf.reshape(departure_tensor[..., 2], [-1]), tf.int32)
+            y, idx, count = tf.unique_with_counts(departure_tensor)
+            departure_count_tensor = tf.tensor_scatter_nd_update(tf.zeros((12,), tf.int32),
+                                                                 tf.reshape(y - 1, [-1, 1]),
+                                                                 count,)
+            departure_distribution_tensor = tf.math.cumsum(departure_count_tensor,
+                                                           reverse=True)
+            return tf.cast(departure_distribution_tensor / capacity, tf.float32)
+
+
+        def _get_parking_observation(self, train: tf.Tensor):
+            parking = tf.cond(tf.constant(train),
+                              self._train_parking.return_fields,
+                              self._eval_parking.return_fields)
+            capacity = tf.cast(tf.cond(tf.constant(train),
+                                       lambda: self._capacity_train_garage,
+                                       lambda: self._capacity_eval_garage),
+                               dtype=tf.float32)
+            next_max_charge = parking.next_max_charge
+            next_min_charge = parking.next_min_charge
+            next_max_discharge = parking.next_max_discharge
+            next_min_discharge = parking.next_min_discharge
+            max_charging_rate = parking.max_charging_rate
+            max_discharging_rate = parking.max_discharging_rate
+            max_acceptable = next_max_charge - next_min_discharge
+            min_acceptable = next_max_discharge - next_min_charge
+            max_acceptable_coefficient = tf.cond(tf.not_equal(max_acceptable, 0.0),
+                                                 lambda: max_acceptable / tf.cond(tf.less(0.0, max_acceptable),
+                                                                                  lambda: next_max_charge,
+                                                                                  lambda: next_max_discharge),
+                                                 lambda: 0.0)
+            min_acceptable_coefficient = tf.cond(tf.not_equal(min_acceptable, 0.0),
+                                                 lambda: min_acceptable / tf.cond(tf.less(min_acceptable, 0.0),
+                                                                                  lambda: next_max_charge,
+                                                                                  lambda: next_max_discharge),
+                                                 lambda: 0.0)
+
+            temp_diff = next_min_charge - next_min_discharge
+            threshold_coefficient = tf.cond(tf.not_equal(temp_diff, 0.0),
+                                                 lambda: temp_diff / tf.cond(tf.less(0.0, temp_diff),
+                                                                                  lambda: next_max_charge,
+                                                                                  lambda: next_max_discharge),
+                                                 lambda: 0.0)
+            return tf.stack([max_acceptable_coefficient,
+                             threshold_coefficient,
+                             -min_acceptable_coefficient,
+                             *tf.unstack(self._calculate_vehicle_distribution(train)),
+                             next_max_charge / max_charging_rate / capacity,
+                             next_min_charge / max_charging_rate / capacity,
+                             next_max_discharge / max_discharging_rate / capacity,
+                             next_min_discharge / max_discharging_rate / capacity,
+                             parking.charge_mean_priority,
+                             parking.discharge_mean_priority,],
+                            axis = 0)
+
+            # return tf.stack([
+            #      tf.convert_to_tensor(i, dtype=tf.float32) for i in [
+            #         max_acceptable_coefficient,
+            #         threshold_coefficient,
+            #         -min_acceptable_coefficient,
+            #         *tf.unstack(self._calculate_vehicle_distribution(train)),
+            #         next_max_charge / max_charging_rate / capacity,
+            #         next_min_charge / max_charging_rate / capacity,
+            #         next_max_discharge / max_discharging_rate / capacity,
+            #         next_min_discharge / max_discharging_rate / capacity,
+            #         parking.charge_mean_priority,
+            #         parking.discharge_mean_priority,
+            #         ]],
+            #     axis = 0)
+
+        def _update_parking(self,
+                            train,
+                            is_charging,
+                            new_energy,
+                            charging_coefficient,
+                            threshold_coefficient):
+            parking = self._train_parking.return_fields() if train else self._eval_parking.return_fields()
+            available_energy = new_energy + parking.next_min_discharge - parking.next_min_charge
+            max_non_emergency_charge = parking.next_max_charge - parking.next_min_charge
+            max_non_emergency_discharge = parking.next_max_discharge - parking.next_min_discharge
+            update_coefficient = tf.cond(
+                tf.less(0.02, my_round(tf.math.abs(charging_coefficient - threshold_coefficient), 2)),
+                lambda: available_energy / tf.cond(is_charging,
+                                                   lambda: max_non_emergency_charge,
+                                                   lambda: max_non_emergency_discharge),
+                lambda: tf.constant(0.0)
+            )
+            update_coefficient = my_round(update_coefficient, 2)
+            if train:
+                self._train_parking.update(update_coefficient)
+            else:
+                self._eval_parking.update(update_coefficient)
+
+    return SingleAgent(list(vehicle_distribution), coefficient_function, checkpoint_dir, MAX_BUFFER_SIZE,
+                       capacity_train_garage, capacity_eval_garage, name, *args, **kwargs)

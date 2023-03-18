@@ -10,13 +10,15 @@ from tf_agents.environments.py_environment import PyEnvironment
 from tf_agents.specs import array_spec
 from tf_agents.trajectories import time_step
 
-from config import GARAGE_LIST, BATTERY_CAPACITY, AVG_CHARGING_RATE
+from config import GARAGE_LIST, BATTERY_CAPACITY, AVG_CHARGING_RATE, DISCOUNT
 
 from app.error_handling import ParkingIsFull
 from app.models.parking import Parking
 from app.models.power_market_env import PowerMarketEnv
 # from app.policies.dqn import DQNPolicy
 from app.models.vehicle import Vehicle
+
+from app.utils import VehicleDistributionList
 
 
 class V2GEnvironment(PyEnvironment):
@@ -29,11 +31,12 @@ class V2GEnvironment(PyEnvironment):
                  capacity: int,
                  mode: str,
                  name: str = "Default_Garage",
-                 vehicle_distribution: List[List[int]] = None,
+                 vehicle_distribution: VehicleDistributionList = None,
                  # energy_curve: EnergyCurve = None,
                  power_market_env: PowerMarketEnv = None,
                  next_agent: Any = None,
-                 charge_list: List[np.float32] = []):
+                 charge_list: List[np.float32] = [],
+                 coefficient_function = None):
         self._action_spec = array_spec.BoundedArraySpec(
             shape=(), dtype=np.int32, minimum=0, maximum=self._length - 1, name="action"
         )
@@ -54,54 +57,57 @@ class V2GEnvironment(PyEnvironment):
             "time_of_day": 0,
             "step": 0,
             "global_step": 0,
-            "metrics": {
-                "loss": [],
-                "num_of_vehicles": [],
-                "cost": [],
-                "overcharged_time_per_car": [],
-                # "c_rate_per_car": [],
-                # "cycle_degradation": [],
-                # "age_degradation": [],
-                "actions": [],
-                "charging_coefficient": [],
-                "test_sum": 0,
-            },
+            # "metrics": {
+            #     "loss": [],
+            #     "num_of_vehicles": [],
+            #     "cost": [],
+            #     "overcharged_time_per_car": [],
+            #     # "c_rate_per_car": [],
+            #     # "cycle_degradation": [],
+            #     # "age_degradation": [],
+            #     "actions": [],
+            #     "charging_coefficient": [],
+            #     "test_sum": 0,
+            # },
         }
         self._capacity = capacity
         self._parking = Parking(capacity, name)
-        self._avg_vehicles_list = [0.0] * 24
+        self._avg_vehicles_list = [0.0] * 24 if not vehicle_distribution else vehicle_distribution.avg_vehicles_list
         # self._energy_curve = energy_curve
+        self._coeffecient_calculator = (lambda x: math.sin(math.pi / 6 * x) / 2 + 0.5) if coefficient_function == None \
+                                                                                     else coefficient_function
         self._vehicle_distribution = vehicle_distribution
         self._next_agent: Any = next_agent
         self._charge_list: List[np.float32] = charge_list
 
-    def get_metrics(self):
-        return self._state["metrics"]
+    # def get_metrics(self):
+    #     return self._state["metrics"]
 
     def _update_avg_demand_list(self): #TODO implement way to calculate expected consumption at given time
-        episodes = int(self._state["global_step"] / 24)
-        self._avg_vehicles_list[self._state["time_of_day"]] = self._parking.get_current_vehicles() / \
-                                                             (episodes + 1) + \
-                                                             self._avg_vehicles_list[self._state["time_of_day"]] * \
-                                                             (episodes / (episodes +1))
-        GARAGE_LIST.append(self._avg_vehicles_list[self._state["time_of_day"]] * AVG_CHARGING_RATE )
+        if not self._vehicle_distribution:
+            episodes = int(self._state["global_step"] / 24)
+            self._avg_vehicles_list[self._state["time_of_day"]] = self._parking.get_current_vehicles() / \
+                                                                 (episodes + 1) + \
+                                                                 self._avg_vehicles_list[self._state["time_of_day"]] * \
+                                                                 (episodes / (episodes +1))
+        GARAGE_LIST.append(self._avg_vehicles_list[self._state["time_of_day"]])
 
     def next_agent(self):
         return self._next_agent
 
-    def reset_metrics(self):
-        self._state["metrics"] = {
-            "loss": [],
-            "num_of_vehicles": [],
-            "cost": [],
-            "overcharged_time_per_car": [],
-            # "c_rate_per_car": [],
-            # "cycle_degradation": [],
-            # "age_degradation": [],
-            "actions": [],
-            "charging_coefficient": [],
-            "test_sum": 0,
-        }
+    # def reset_metrics(self):
+    #     self._state["metrics"] = {
+    #         "loss": [],
+    #         "num_of_vehicles": [],
+    #         "cost": [],
+    #         "overcharged_time_per_car": [],
+    #         # "c_rate_per_car": [],
+    #         # "cycle_degradation": [],
+    #         # "age_degradation": [],
+    #         "actions": [],
+    #         "charging_coefficient": [],
+    #         "test_sum": 0,
+    #     }
 
     def time_step_spec(self):
         return self._time_step_spec
@@ -124,8 +130,8 @@ class V2GEnvironment(PyEnvironment):
         self._state["global_step"] = 0
         self._power_market_env.hard_reset()
         # self._energy_curve.reset()
-        self.reset_metrics()
-        self._avg_vehicles_list = [0.0] * 24
+        # self.reset_metrics()
+        self._avg_vehicles_list = [0.0] * 24 if not self._vehicle_distribution else self._avg_vehicles_list
 
 
     def _reset(self) -> time_step.TimeStep:
@@ -183,15 +189,13 @@ class V2GEnvironment(PyEnvironment):
         is_buying = charging_coefficient > 0
 
         num_of_vehicles = len(self._parking._vehicles)
-        reward = 0.0
-        discount = 0
 
-        self._state["metrics"]["cost"].append(0)
-        # self._state["metrics"]["cycle_degradation"].append(0)
-        # self._state["metrics"]["age_degradation"].append(0)
-        self._state["metrics"]["num_of_vehicles"].append(num_of_vehicles)
-        self._state["metrics"]["actions"].append(idx)
-        self._state["metrics"]["charging_coefficient"].append(charging_coefficient)
+        # self._state["metrics"]["cost"].append(0)
+        # # self._state["metrics"]["cycle_degradation"].append(0)
+        # # self._state["metrics"]["age_degradation"].append(0)
+        # self._state["metrics"]["num_of_vehicles"].append(num_of_vehicles)
+        # self._state["metrics"]["actions"].append(idx)
+        # self._state["metrics"]["charging_coefficient"].append(charging_coefficient)
         
         self._update_avg_demand_list()
 
@@ -242,19 +246,21 @@ class V2GEnvironment(PyEnvironment):
                 #     f"Available Energy: {available_energy}"
                 # )
                 # print(f"Update coefficient: {update_coefficient}")
-                avg_charge_levels, degrade_rates, overcharged_time = self._parking.update(update_coefficient)
+                # avg_charge_levels, overcharged_time = self._parking.update(update_coefficient)
+                self._parking.update(update_coefficient)
 
                 # print(f"Available charge levels: {avg_charge_levels}")
                 # print(f"Degrade rates: {degrade_rates}")
 
-                cost = np.float32(current_cost)
+                # cost = np.float32(current_cost)
+                # reward = -np.float32(current_cost)
                 # cost = int(new_energy * current_cost * 100)
                 # print(
                 #     f"Charg Coeff: {charging_coefficient}, New E: {new_energy}, Current C: {current_cost},"
                 #     + f" Total: {cost}, Vehicles: {num_of_vehicles}"
                 #     + f", Avg Ch L: {sum(avg_charge_levels) / len(avg_charge_levels)}"
                 # )
-                self._state["metrics"]["test_sum"] += new_energy
+                # self._state["metrics"]["test_sum"] += new_energy
 
                 # cycle_degradation_cost = 0.0
                 # for degrade_rate in degrade_rates:
@@ -278,21 +284,20 @@ class V2GEnvironment(PyEnvironment):
                 #     )
                 # age_degradation_cost = int(age_degradation_cost * 100)
 
-                reward = -cost
+                # reward = -cost
                 # reward = -cost - cycle_degradation_cost - age_degradation_cost
                 # reward = -cost - unmet_demand - cycle_degradation_cost - age_degradation_cost
                 # reward = sigmoid( )
 
                 # Update metrics
-                self._state["metrics"]["cost"][-1] = cost
-                # self._state["metrics"]["cycle_degradation"][-1] = cycle_degradation_cost
-                # self._state["metrics"]["age_degradation"][-1] = age_degradation_cost
-                self._state["metrics"]["overcharged_time_per_car"] += overcharged_time
-                # self._state["metrics"]["c_rate_per_car"] += [
-                #     round(d / self._battery_capacity, 4) for d in degrade_rates
-                # ]
+                # self._state["metrics"]["cost"][-1] = cost
+                # # self._state["metrics"]["cycle_degradation"][-1] = cycle_degradation_cost
+                # # self._state["metrics"]["age_degradation"][-1] = age_degradation_cost
+                # self._state["metrics"]["overcharged_time_per_car"] += overcharged_time
+                # # self._state["metrics"]["c_rate_per_car"] += [
+                # #     round(d / self._battery_capacity, 4) for d in degrade_rates
+                # # ]
 
-                discount = 0.9
                 # print(f"Energy cost: {cost}")
                 # print(f"Cycle degradation cost: {cycle_degradation_cost}")
                 # print(f"Age degradation cost: {age_degradation_cost}")
@@ -310,6 +315,8 @@ class V2GEnvironment(PyEnvironment):
                 # self._next_agent.eval_env.update_charge_list(self._charge_list.insert(0, np.float32(new_energy)))
 
             observation, current_cost, done, info = self._power_market_env.step(self._charge_list)
+
+        # reward = -np.float32(current_cost)
 
         self._state["time_of_day"] += 1
         self._state["time_of_day"] %= 24
@@ -364,8 +371,8 @@ class V2GEnvironment(PyEnvironment):
             raise ValueError
         return time_step.TimeStep(
             step_type=time_step.StepType.MID if self._state["step"] < 24 else time_step.StepType.LAST,
-            reward=np.array(reward / 1000, dtype=np.float32),
-            discount=np.array(discount, dtype=np.float32),
+            reward=np.array(-current_cost / 1000, dtype=np.float32),
+            discount=np.array(DISCOUNT, dtype=np.float32                                                                                                                                                                                                                                                                                                                                                                                                        ),
             observation=np.array(
                 [
                     max_acceptable_coefficient,
@@ -398,7 +405,7 @@ class V2GEnvironment(PyEnvironment):
 
         return list(map(lambda x: x / self._capacity, vehicle_departure_distribution))
 
-    def _add_new_cars(self):
+    def _add_new_cars(self):  #TODO decide on way to choose betwen distributions
         if self._state["time_of_day"] > 21:
             return
 
@@ -417,7 +424,8 @@ class V2GEnvironment(PyEnvironment):
             except UnboundLocalError:
                 print("No more cars in vehicle distribution, none added to the Parking")
         else:
-            day_coefficient = math.sin(math.pi / 6 * self._state["time_of_day"]) / 2 + 0.5
+            # day_coefficient = math.sin(math.pi / 6 * self._state["time_of_day"]) / 2 + 0.5#TODO probably add constant
+            day_coefficient = self._coeffecient_calculator(self._state["time_of_day"])
             new_cars = max(0, int(np.random.normal(10 * day_coefficient, 2 * day_coefficient)))
             try:
                 for _ in range(new_cars):
@@ -437,7 +445,7 @@ class V2GEnvironment(PyEnvironment):
         initial_charge = initial_charge or round(6 + random.random() * 20, 2)
         target_charge = target_charge or round(34 + random.random() * 20, 2)
 
-        return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge, self._mode)
+        return Vehicle(initial_charge, target_charge, total_stay, max_charge, min_charge)
 
     # def cycle_degradation(self, c_rate):
     #     return 5e-5 * c_rate + 1.8e-5
@@ -452,6 +460,9 @@ class V2GEnvironment(PyEnvironment):
     #         float : the total lost capacity
     #     """
     #     return (0.09 * soc + 0.02) / 900 / 24
+
+    def get_reward_func_name(self):
+        return self._power_market_env.get_reward_func_name()
 
     def toJson(self) -> Dict[str, Any]:
         return {"name": self._mode, "parking": self._parking.toJson()}

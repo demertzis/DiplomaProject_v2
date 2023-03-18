@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 from config import CRID_COEFFICIENT, AVG_CONSUMPTION
 
@@ -71,7 +73,9 @@ def vanilla(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.nd
 		buy_price_max = (abs(min(0., demand_overflow)) * crid_price + min(AVG_CONSUMPTION(), max(0., total_demand)) *
 		                 prices[tick]) / total_demand
 	else:
-		return np.asarray([np.float32(0.0) for _ in action])
+		final_price = (prices[tick] + crid_price) / 2
+		return np.asarray([np.float32(i * final_price) for i in action])
+		return np.asarray([np.float32(0.0) for _ in action])#TODO wrong fix it
 
 	neg_values = np.sum(action, where = [i < 0 for i in action])
 	pos_values = np.sum(action, where = [i >= 0 for i in action])
@@ -95,10 +99,12 @@ def halfway_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: in
 
 	common_load = min(total_sell_load, total_buy_load) if prices[tick] > sell_price_min else 0
 	common_part = (sell_price_min + prices[tick]) / 2 * common_load if prices[tick] > sell_price_min else 0
-	final_sell_price = ((total_sell_load - common_load) * sell_price_min + common_part) / total_sell_load
+	final_sell_price = ((total_sell_load - common_load) * sell_price_min + common_part) / \
+                       total_sell_load if total_sell_load > 0.0 else 0.0
 	final_buy_price = (max(0, total_buy_load - AVG_CONSUMPTION() - common_load) * crid_price
 	                   + common_part
-	                   + min(AVG_CONSUMPTION(), total_buy_load - common_load) * prices[tick]) / total_buy_load
+	                   + min(AVG_CONSUMPTION(), total_buy_load - common_load) * prices[tick]) /\
+                      total_buy_load if total_buy_load > 0.0 else 0.0
 
 	# rewards = np.asarray([i * (final_buy_price if i > 0 else final_sell_price) for i in action])
 	# final_revenue = np.sum(rewards) - min(AVG_CONSUMPTION(), np.sum(action)) * prices[tick] - max(0, np.sum(
