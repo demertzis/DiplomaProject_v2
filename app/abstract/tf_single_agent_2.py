@@ -17,9 +17,9 @@ from tf_agents.utils.nest_utils import assert_matching_dtypes_and_inner_shapes
 
 from app.models.tf_utils import my_round
 from app.error_handling import ParkingIsFull
-from app.models.tf_parking_3 import Parking
+from app.models.tf_parking_4 import Parking
 from app.models.tf_vehicle_4 import Vehicle, VehicleFields
-from app.utils import tf_vehicle_generator
+from app.utils import tf_vehicle_generator, vehicle_arrival_generator_for_tf
 
 from config import MAX_BUFFER_SIZE
 
@@ -65,10 +65,22 @@ def create_single_agent(cls: type,
             self._capacity_eval_garage = capacity_eval_garage
             self._train_parking = Parking(self._capacity_train_garage, 'train')
             self._eval_parking = Parking(self._capacity_eval_garage, 'eval')
-            self._train_vehicle_generator = tf_vehicle_generator(coefficient_function=coefficient_function,
-                                                                      vehicle_list=None)
-            self._eval_vehicle_generator = tf_vehicle_generator(coefficient_function=None,
-                                                                     vehicle_list=vehicle_distribution)
+            self._tf_train_vehicle_generator = iter(tf.data.Dataset.from_generator(vehicle_arrival_generator_for_tf
+                                                                                  (coefficient_function,
+                                                                                   None,
+                                                                                   True),
+                                                                                   output_signature=tf.TensorSpec
+                                                                                  (shape=(None,
+                                                                                          None),
+                                                                                   dtype=tf.float32)).prefetch(tf.data.AUTOTUNE))
+            self._tf_eval_vehicle_generator = iter(tf.data.Dataset.from_generator(vehicle_arrival_generator_for_tf
+                                                                                  (None,
+                                                                                   vehicle_distribution,
+                                                                                   False),
+                                                                                  output_signature=tf.TensorSpec
+                                                                                  (shape=(None,
+                                                                                          None),
+                                                                                   dtype=tf.float32)).prefetch(tf.data.AUTOTUNE))
             self._private_observations = tf.Variable(tf.zeros([buffer_max_size, 21]),
                                                      shape=[buffer_max_size, 21],
                                                      dtype=tf.float32,
@@ -131,15 +143,21 @@ def create_single_agent(cls: type,
         @tf.function
         def _add_new_cars(self, train_mode=True):  # TODO decide on way to choose between distributions
             print('Tracing add_new_cars')
-            index = self._time_of_day if train_mode else self._eval_steps
-            new_cars = self._train_vehicle_generator(index) if train_mode \
-                                                            else self._eval_vehicle_generator(index).to_tensor()
-            for vehicle in new_cars:
-                v = VehicleFields(vehicle[1], vehicle[2], vehicle[0], 60.0, 0.0)
-                if train_mode:
-                    self._train_parking.assign_vehicle(v)
-                else:
-                    self._eval_parking.assign_vehicle(v)
+            vehicles = next(self._tf_train_vehicle_generator) if train_mode \
+                                                              else next(self._tf_eval_vehicle_generator)
+            num_of_vehicles = tf.shape(vehicles)[0]
+            max_min_charges = tf.repeat([[60., 0.]], repeats=tf.shape(vehicles)[0], axis=0)
+            if num_of_vehicles == 0:
+                vehicles = tf.zeros([0,13], tf.float32)
+            else:
+                vehicles = tf.concat((vehicles, max_min_charges), axis=1)
+                vehicles = tf.pad(vehicles, [[0, 0], [0, 8]], constant_values=0.0)
+            if train_mode:
+                self._train_parking.assign_vehicles(vehicles)
+            else:
+                self._eval_parking.assign_vehicles(vehicles)
+
+
 
         @tf.function
         def _train(self, experience: types.NestedTensor,

@@ -149,6 +149,7 @@ class Vehicle:
         self._next_max_discharge.assign(fields.next_max_discharge)
         self._next_min_discharge.assign(fields.next_min_discharge)
 
+    @tf.function
     def return_fields(self):
         return VehicleFields(self._current_charge.value(),
                              self._target_charge.value(),
@@ -176,7 +177,7 @@ class Vehicle:
             max_discharging_rate (``float``):
                 description: The maximum discharging rate
         """
-        # print('Tracing park')
+        print('Tracing park')
         self._max_charging_rate.assign(max_charging_rate)
         self._max_discharging_rate.assign(max_discharging_rate)
         self.update()
@@ -203,7 +204,7 @@ class Vehicle:
         ### Returns:
             float : The next max charge
         """
-        #print('Tracing calculate_next_max_charge')
+        print('Tracing calculate_next_max_charge')
         return my_round(
             tf.math.reduce_min(
                 tf.stack((self._max_charging_rate + current_charge,
@@ -238,7 +239,7 @@ class Vehicle:
         ### Returns:
             float : The next min charge
         """
-        #print('Tracing calculate_next_min_charge')
+        print('Tracing calculate_next_min_charge')
         return my_round(
             tf.math.reduce_max(
                 tf.stack(
@@ -252,7 +253,7 @@ class Vehicle:
             tf.constant(3),
         )
 
-    #@tf.function
+    @tf.function
     def _update_next_charging_states(self):
         """
         Update max and min charge state variables
@@ -261,7 +262,7 @@ class Vehicle:
         - ``ΔΕ-(max) = max(0, current_charge - next_min_charge)``
         - ``ΔΕ-(min) = max(0, current_charge - next_max_charge)``
         """
-        #print('Tracing update_next_charging_states')
+        print('Tracing update_next_charging_states')
         next_max_charge = self._calculate_next_max_charge(self._current_charge.value(),
                                                           self._time_before_departure.value())
         next_min_charge = self._calculate_next_min_charge(self._current_charge.value(),
@@ -275,7 +276,7 @@ class Vehicle:
         self._next_max_discharge.assign(new_max_discharge)
         new_min_discharge = my_round(tf.math.maximum(0.0, self._current_charge - next_max_charge), tf.constant(3))
         self._next_min_discharge.assign(new_min_discharge)
-    #@tf.function
+    @tf.function
     def _calculate_charge_curves(self):
         """
         Calculate the max and min charge curves of the vehicle
@@ -291,7 +292,7 @@ class Vehicle:
         ### Returns
             Tuple[float[], float[]] : The points of the max and min curve respectively in ascending time order
         """
-        #print('Tracing calculate_charge_curves')
+        print('Tracing calculate_charge_curves')
         current_max_charge = self._current_charge.value()
         current_min_charge = self._current_charge.value()
 
@@ -310,11 +311,9 @@ class Vehicle:
             max_charges = max_charges.write(i, current_max_charge)
             min_charges = min_charges.write(i, current_min_charge)
             i += 1
-
-        # return my_pad(max_charges.stack()), my_pad(min_charges.stack())
         return max_charges.stack(), min_charges.stack()
 
-    #@tf.function
+    @tf.function
     def _update_priorities(self):
         """
         Update the charging and discharging priorities of the vehicle
@@ -334,7 +333,7 @@ class Vehicle:
         From the above it is obvious that the following is true for the two priorities:
         ``charging_priority = 1 - discharging_priority``
         """
-        #print('Tracing update_priorities')
+        print('Tracing update_priorities')
         # x_axes = tf.range(13.0)
         x_axes = tf.range(self._time_before_departure + 1.0)
         max_curve, min_curve = self._calculate_charge_curves()
@@ -391,7 +390,7 @@ class Vehicle:
         """
         Update state variables
         """
-        # print('Tracing update')
+        print('Tracing update')
         self._update_next_charging_states()
         self._update_priorities()
 
@@ -422,7 +421,7 @@ class Vehicle:
         ### Returns:
             float : The residue energy that wasn't allocated by this vehicle
         """
-        #print('Tracing update_current_charge')
+        print('Tracing update_current_charge')
         is_charging = tf.less_equal(0.0, charging_coefficient)
         priority = tf.cond(is_charging,
                            lambda: self._charge_priority,
@@ -456,7 +455,7 @@ class Vehicle:
         """
         Satisfy the minimum demand of the vehicle
         """
-        #print('Tracing update_emergency_demand')
+        print('Tracing update_emergency_demand')
         new_current_charge = self._current_charge + self._next_min_charge - self._next_min_discharge
         self._current_charge.assign(new_current_charge)
         self._next_max_charge.assign_sub(self._next_min_charge)
@@ -464,7 +463,7 @@ class Vehicle:
         self._next_min_charge.assign(0.0)
         self._next_min_discharge.assign(0.0)
 
-
+    @tf.function
     def get_current_charge(self):
         """
         Get current charge
@@ -474,6 +473,7 @@ class Vehicle:
         """
         return tf.constant(self._current_charge)
 
+    @tf.function
     def get_target_charge(self):
         """
         Get the target charge
@@ -483,6 +483,7 @@ class Vehicle:
         """
         return tf.constant(self._target_charge)
 
+    @tf.function
     def get_time_before_departure(self):
         """
         Get the total time before departure
@@ -492,6 +493,7 @@ class Vehicle:
         """
         return tf.cast(self._time_before_departure, tf.int32)
 
+    @tf.function
     def get_max_charge(self):
         """
         Get max charge
@@ -501,6 +503,7 @@ class Vehicle:
         """
         return self._max_charge
 
+    @tf.function
     def get_min_charge(self):
         """
         Get min charge
@@ -510,6 +513,7 @@ class Vehicle:
         """
         return self._min_charge
 
+    @tf.function
     def get_next_max_charge(self):
         """
         Get next max charge
@@ -519,6 +523,7 @@ class Vehicle:
         """
         return tf.constant(self._next_max_charge)
 
+    @tf.function
     def get_next_min_charge(self):
         """
         Get next min charge
@@ -528,6 +533,7 @@ class Vehicle:
         """
         return tf.constant(self._next_min_charge)
 
+    @tf.function
     def get_next_max_discharge(self):
         """
         Get next max discharge
@@ -537,6 +543,7 @@ class Vehicle:
         """
         return tf.constant(self._next_max_discharge)
 
+    @tf.function
     def get_next_min_discharge(self):
         """
         Get next min discharge
@@ -546,6 +553,7 @@ class Vehicle:
         """
         return tf.constant(self._next_min_discharge)
 
+    @tf.function
     def get_charge_priority(self):
         """
         Get charge priority
@@ -555,6 +563,7 @@ class Vehicle:
         """
         return tf.constant(self._charge_priority)
 
+    @tf.function
     def get_discharge_priority(self):
         """
         Get discharge priority
@@ -564,26 +573,6 @@ class Vehicle:
         """
         return tf.constant(self._discharge_priority)
     
-    # def __tf_tracing_type__(self):
-
-    # def get_original_target_charge(self):
-    #     """
-    #     Get original target charge
-    #
-    #     ### Returns:
-    #         float : The original target charge of the vehicle
-    #     """
-    #     return self._original_target_charge
-
-    # def get_overchared_time(self):
-    #     """
-    #     Get overcharged time
-    #
-    #     ### Returns:
-    #         float : The time the vehicle spent on a SOC greater than 50%
-    #     """
-    #     return self._overcharged_time
-
     def toJson(self) -> Dict[str, Any]:
         return {
             # "class": Vehicle.__name__,

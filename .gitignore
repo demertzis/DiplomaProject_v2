@@ -25,3 +25,12 @@ make_random_energy.py
 #junk files that might be usefull in development
 junk_test_utils.py
 
+#checkpoints
+/checkoints_legacy/*
+/best_checkpoints/*
+/new_checkpoints/*
+
+#data for pretraining networks(probably deprecated since I have changed the network inputs order)
+/colab_data_with_decay_2_dummy.csv
+/colab_data_without_decay.csv
+/new_checkpoints/

@@ -3,8 +3,8 @@ import json
 from app.models.energy import EnergyCurve
 from app.utils import VehicleDistributionList
 from typing import List
-from app.policies.dummy_v2g import DummyV2G
-from app.policies.smart_charger import SmartCharger
+from app.policies.smart_charger import DummyV2G
+from app.policies.dummy_v2g import SmartCharger
 from app.policies.utils import metrics_visualization
 from app.policies.dqn import DQNPolicy
 from app.models.garage_env import V2GEnvironment

@@ -1,8 +1,8 @@
 from app.utils import create_vehicle_distribution
 from tf_agents.environments import tf_py_environment
 import app
-from app.policies.dummy_v2g import DummyV2G
-from app.policies.smart_charger import SmartCharger
+from app.policies.smart_charger import DummyV2G
+from app.policies.dummy_v2g import SmartCharger
 from app.abstract.utils import compute_avg_return
 from app.policies.utils import metrics_visualization
 from app.policies.dqn import DQNPolicy

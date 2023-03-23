@@ -12,29 +12,21 @@ class DummyV2G:
         self.threshold = threshold
 
     def action(self, timestep: TimeStep) -> PolicyStep:
-        observation = timestep.observation.numpy()[0]
-        current_price = observation[3]
-        max_coefficient, threshold_coefficient, min_coefficient = observation[:3]
+        observation = tf.squeeze(timestep.observation)
+        current_price = observation[0]
+        max_coefficient, threshold_coefficient, min_coefficient = observation[13:16]
         coefficient_step = (max_coefficient - min_coefficient) / (self.actions_length - 1)
-        # print(f"Price: {current_price}, Obs coeffs {max_coefficient, threshold_coefficient, min_coefficient}", end="")
         if coefficient_step == 0:
-            return PolicyStep(action=tf.constant(np.array([self.actions_length - 1], dtype=np.int32)))
-
+            return PolicyStep(action=tf.constant([self.actions_length - 1], dtype=np.int32))
         good_price = current_price < self.threshold
-        coefficient = threshold_coefficient
-
         if good_price:
             coefficient = (threshold_coefficient - max_coefficient) * (current_price / self.threshold) + max_coefficient
         else:
             coefficient = min_coefficient - (min_coefficient - threshold_coefficient) * math.e ** (
-                1 - current_price / self.threshold
+                1.0 - current_price / self.threshold
             )
-
-        # print(f", coefficient: {coefficient}")
-
         return PolicyStep(
-            action=tf.constant(np.array([round((coefficient - min_coefficient) / coefficient_step)], dtype=np.int32))
+            action=tf.constant(np.array([tf.round((coefficient - min_coefficient) / coefficient_step)], dtype=np.int32))
         )
 
 
-# PolicyStep(action=<tf.Tensor: shape=(1,), dtype=int32, numpy=array([3], dtype=int32)>, state=(), info=())

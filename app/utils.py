@@ -143,7 +143,57 @@ def compute_avg_vehicle_list(coefficient_function: Callable, num_of_days: int = 
                     avg_vehicles_list[(i + 1) % 24 + z - 1] += 1
     return [x / num_of_days for x in avg_vehicles_list]
 
+def vehicle_arrival_generator_for_tf(coefficient_function: Callable, vehicles_list: List, train: bool = True):
+    if train and not coefficient_function or not train and not vehicles_list:
+        raise Exception("Improper intialization of vehicle generator. Either call the train version with a "
+                        "coefficient function or the eval (train = False) with a vehicles_list")
+    def eval_vehicle_generator():
+        l = len(vehicles_list)
+        vehicles_tensor = tf.ragged.constant(vehicles_list, tf.float32)
+        index = tf.constant(0)
+        while True:
+            tensor = vehicles_tensor[index].to_tensor()
+            tensor = tf.cond(tf.less(0, tf.shape(tensor)[0]),
+                             lambda: tf.concat((tensor[..., 1:2], tensor[..., 2:3], tensor[..., 0:1]), axis=1),
+                             lambda: tf.zeros((0,3), tf.float32)
+                             )
+            yield tensor
+            index += 1
+            index %= l
+    def train_vehicle_generator():
+        time_of_day = tf.constant(0)
+        while True:
+            day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
+            new_cars = tf.cond(tf.less(time_of_day, 22),
+                               lambda: tf.math.floor(tf.maximum(0.0,
+                                                           tf.random.normal([],
+                                                                            10.0 * day_coefficient,
+                                                                            2.0 * day_coefficient),
+                                                          ),
+                                               ),
+                               lambda: tf.constant(0.0))
+            departure = lambda: tf.cast(tf.minimum(24 - time_of_day % 24,
+                                                   tf.random.uniform((), 7, 13, tf.int32)),
+                                        tf.float32)
+            current_charge = lambda: my_round(6.0 + tf.random.uniform(()) * 20.0, tf.constant(2))
+            target_charge = lambda: my_round(6.0 + tf.random.uniform(()) * 34.0, tf.constant(2))
+            c = lambda i, t: i < new_cars
+            b = lambda i, t: (i + 1.0,
+                              tf.concat((t, tf.expand_dims(tf.stack((current_charge(), target_charge(), departure())),
+                                                           axis=0)),
+                                        axis=0))
+            s = (0.0, tf.zeros((0, 3), tf.float32))
+            i, vehicles = tf.while_loop(c,
+                                        b,
+                                        s,
+                                        shape_invariants=(tf.TensorSpec((), tf.float32),
+                                                          tf.TensorSpec((None, 3), tf.float32)))
 
+            yield vehicles
+            time_of_day += 1
+            time_of_day %= 24
+
+    return train_vehicle_generator if train else eval_vehicle_generator
 
 def vehicle_arrival_generator(coefficient_function: Optional[Callable],
                             vehicle_list: Optional[Union[VehicleDistributionList, List]]):

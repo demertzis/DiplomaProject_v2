@@ -11,7 +11,7 @@ from tf_agents.trajectories.time_step import TimeStep
 from app.models.energy import EnergyCurve
 from app.models.garage_env import V2GEnvironment
 # from app.policies.smart_charger import SmartCharger
-from app.policies.dummy_v2g import DummyV2G
+from app.policies.smart_charger import DummyV2G
 from app.utils import create_vehicle_distribution
 
 from config import GARAGE_LIST

@@ -1,6 +1,8 @@
 import json
+import time
 from typing import List
 
+import tensorflow as tf
 import gym
 import numpy as np
 from gym.envs.registration import register
@@ -60,6 +62,11 @@ for _ in range(NUMBER_OF_AGENTS):
 # market_env_rtrain.change_reward_function(1)
 # market_env_eval.change_reward_function(1)
 # market_env_train.change_reward_function(1)
-# market_env_eval.change_reward_function(1)
-for _ in range(5):
+# market_env_eval.change_reward_function(1)a
+st = time.time()
+strategy = tf.distribute.get_strategy()
+with strategy.scope():
+# for _ in range(1):
     agent_list[0].train()
+et = time.time()
+print(et - st)

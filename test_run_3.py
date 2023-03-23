@@ -1,5 +1,5 @@
 import json
-
+from time import time
 import numpy as np
 from tf_agents.agents.dqn.dqn_agent import DdqnAgent
 from tf_agents.specs import tensor_spec, array_spec
@@ -82,15 +82,15 @@ kwargs = {
 reward_function = rf.vanilla
 reward_name = reward_function.__name__
 
+ckpt_dir = '/'.join(['new_checkpoints',
+                     str(NUMBER_OF_AGENTS) +
+                     '_AGENTS',
+                     reward_name])
+
 agent_list = []
 for i in range(NUMBER_OF_AGENTS):
     agent_list.append(create_single_agent(cls=DdqnAgent,
-                                          checkpoint_dir='/'.join([
-                                              'new_checkpoints',
-                                              str(NUMBER_OF_AGENTS) +
-                                              '_AGENTS',
-                                              reward_name,
-                                          ]),
+                                          ckpt_dir=ckpt_dir,
                                           vehicle_distribution=list(vehicles),
                                           capacity_train_garage=100,
                                           capacity_eval_garage=200,
@@ -111,10 +111,12 @@ eval_env = TFPowerMarketEnv(energy_curve_eval,
                             NUMBER_OF_AGENTS,
                             False)
 
-multi_agent = MultipleAgents(train_env,
-                             eval_env,
-                             agent_list,)
+multi_agent = MultipleAgents(train_env, eval_env, agent_list, ckpt_dir)
 # print(multi_agent.eval_policy())
-
-multi_agent.train()
-print('')
+st = time()
+strategy = tf.distribute.get_strategy()
+with strategy.scope():
+    multi_agent.train()
+et = time()
+print('Expired time: {}'.format(et - st))
+print(multi_agent.returns)

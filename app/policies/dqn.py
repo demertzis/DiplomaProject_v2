@@ -4,6 +4,8 @@ import sys
 from functools import reduce
 from typing import List
 
+import time
+
 import numpy as np
 import tensorflow as tf
 # from tensorflow.keras import layers
@@ -13,6 +15,7 @@ from tf_agents.specs import tensor_spec
 from tf_agents.trajectories import trajectory
 from tf_agents.utils import common
 
+import config
 from app.abstract.ddqn import DDQNPolicy
 from app.abstract.utils import MyCheckpointer
 from app.models.garage_env import V2GEnvironment
@@ -24,7 +27,8 @@ from config import GARAGE_LIST, NUMBER_OF_AGENTS
 
 class DQNPolicy(DDQNPolicy):
     # num_iterations = 24 * 30 * 200  # @param {type:"integer"}
-    num_iterations = 24 * 100 * 300
+    # num_iterations = 24 * 100 * 200
+    num_iterations = config.TRAIN_ITERATIONS
     num_eval_episodes = 10  # @param {type:"integer"}
     # eval_interval = 24 * 30 * 8  # @param {type:"integer"}
     eval_interval = 24 * 100  # @param {type:"integer"} # 100 days in dataset
@@ -250,12 +254,15 @@ class DQNPolicy(DDQNPolicy):
 
         for _ in range(self.num_iterations):
             # self.trickle_down("raw_train_env.update_garage_list()")
+            st = time.time()
             self.collect_data(1)  # was used in _step method
+            print('collect_time: ', time.time() - st)
             self.trickle_down("_train_step()")
 
             step = self.agent.train_step_counter.numpy()  # TODO check this too
             if step % self.eval_interval == 0:  # TODO fix evaluation, it's executed by each agent (second agent fails)
                 # avg_return = self.compute_avg_return(self.num_eval_episodes)
+
                 self.compute_eval_list(self.num_eval_episodes)
                 epoch = self._i // self.eval_interval
                 total_epochs = self.num_iterations // self.eval_interval
@@ -270,6 +277,8 @@ class DQNPolicy(DDQNPolicy):
                 if self._last_eval > self._best_eval:
                     self._best_eval = self._last_eval
                     self.best_checkpointer.save(global_step=self.global_step.numpy())
+            et = time.time()
+            print(et - st)
         # self.train_checkpointer.initialize_or_restore()
         # self.train_checkpointer.initialize_or_restore().expect_partial()
         self.train_checkpointer.save(global_step=self.global_step.numpy())

@@ -117,7 +117,7 @@ class TFPowerMarketEnv(TFEnvironment):
         reward_tensor = self._reward_function(self._day_ahead_prices,
                                               self._intra_day_prices[self._time_of_day],
                                               self._time_of_day,
-                                              action)
+                                              action) / (-1000.0)
         #TODO add some kind of monitoring of prices
         self._time_of_day.assign_add(1)
         obs = self._get_obs()
