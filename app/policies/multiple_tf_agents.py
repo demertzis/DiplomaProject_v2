@@ -4,6 +4,7 @@ import tensorflow as tf
 from tf_agents.agents import TFAgent, data_converter
 from tf_agents.drivers import tf_driver
 from tf_agents.drivers.dynamic_step_driver import DynamicStepDriver
+from tf_agents.drivers.py_driver import PyDriver
 from tf_agents.metrics import tf_metrics
 from tf_agents.policies.tf_policy import TFPolicy
 from tf_agents.replay_buffers import reverb_utils, reverb_replay_buffer, tf_uniform_replay_buffer
@@ -57,12 +58,15 @@ class MultiAgentPolicyWrapper(TFPolicy):
     def _action(self, time_step: ts.TimeStep,
               policy_state: types.NestedTensor,
               seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
-        print('action')
+        # print('action')
         axis = 1 if tf.rank(time_step.observation) > 0 else -1
         action_tensor = tf.concat([policy.action(time_step,
                                                  policy_state,
                                                  seed).action for policy in self._policy_list],
                                   axis=axis)
+        # action_tensor = self._policy_list[0].action(time_step,
+        #                                             policy_state,
+        #                                             seed).action
         info = tf.fill([tf.shape(time_step.observation)[0], 1], self._global_step % MAX_BUFFER_SIZE)
         if self._collect:
             self._global_step.assign_add(1)
@@ -81,7 +85,7 @@ class MultipleAgents:
     collect_steps_per_iteration = 1  # @param {type:"integer"}
     replay_buffer_capacity = MAX_BUFFER_SIZE  # @param {type:"integer"}
 
-    batch_size = 24  # @param {type:"integer"}
+    batch_size = 12  # @param {type:"integer"}
     # batch_size = 1  # @param {type:"integer"}
     learning_rate = 1e-3  # @param {type:"number"}
     log_interval = 24 * 10  # @param {type:"integer"}
@@ -95,7 +99,7 @@ class MultipleAgents:
 
         self.ckpt_dir = ckpt_dir
 
-        self.returns = tf.constant(())
+        self.returns = []
         self._agent_list: List[TFAgent] = agents_list
         self._number_of_agents = len(self._agent_list)
         self._collect_data_context = data_converter.DataContext(
@@ -136,7 +140,10 @@ class MultipleAgents:
                                               self.policy,
                                               [self._metric],
                                               num_steps=steps)
-
+        # self._eval_driver = PyDriver(self.eval_env,
+        #                              self.policy,
+        #                              [self._metric],
+        #                              max_steps=steps)
         for agent in self._agent_list:
             agent.initialize()
             agent.train = common.function(agent.train)
@@ -151,7 +158,6 @@ class MultipleAgents:
         return self._collect_data_context.trajectory_spec
 
     def train(self):
-        # print(self.returns[-1])
         best_avg_return = self.eval_policy()
         print(best_avg_return)
         dataset = self.replay_buffer.as_dataset(
@@ -160,42 +166,62 @@ class MultipleAgents:
             num_steps=2).prefetch(3)
         iterator = iter(dataset)
         DynamicStepDriver(self.train_env,
+        # PyDriver(self.train_env,
                           self.collect_policy,
                           [lambda traj: self.replay_buffer.add_batch(traj.replace(action=())),
                            lambda traj: self.global_step.assign_add(1)],
                           num_steps=self.initial_collect_steps).run()
+                 # max_steps=self.initial_collect_steps).run(self.train_env.reset())
         collect_driver = DynamicStepDriver(self.train_env,
                                            self.collect_policy,
                                            [lambda traj: self.replay_buffer.add_batch(traj.replace(action=())),
                                             lambda traj: self.global_step.assign_add(1)],
                                            num_steps=1)
+        # collect_driver = PyDriver(self.train_env,
+        #                           self.collect_policy,
+        #                           [lambda traj: self.replay_buffer.add_batch(traj.replace(action=())),
+        #                            lambda traj: self.global_step.assign_add(1)],
+        #                           # num_steps=self.initial_collect_steps).run()
+        #                           max_steps=1)
         time_step = self.train_env.reset()
+        epoch_st = time.time()
+        epoch_train_st = 0.0
         for _ in range(self.num_iterations):
-            st = time.time()
+            # st = time.time()
             time_step, __ = collect_driver.run(time_step)
-            ct = time.time()
-            print('collect_time: ', ct - st)
+            # ct = time.time()
+            # print('collect_time: ', ct - st)
             experience, ___ = next(iterator)
+            tst = time.time()
             train_loss = [agent.train(experience).loss for agent in self._agent_list]
+            epoch_train_st += (time.time() - tst)
             step = self._agent_list[0].train_step_counter
             if step % self.log_interval == 0:
                 print('step = ', step, '     loss', train_loss)
             if step % self.eval_interval == 0:
                 avg_return = self.eval_policy()
-                epoch = tf.floor( _ / self.eval_interval)
+                epoch = int(_ / self.eval_interval)
                 print('Epoch: ', epoch + 1, '            Avg_return = ', avg_return)
+                epoch_et = time.time()
+                print('Epoch duration: ', epoch_et - epoch_st)
+                print('Train duration: ', epoch_train_st)
+                epoch_train_st = 0.0
+                epoch_st = epoch_et
                 self.returns.append(avg_return)
                 if avg_return > best_avg_return:
                     best_avg_return = avg_return
                     self.checkpoint.save(step)
                     for agent in self._agent_list:
                         agent.checkpoint_save()
-            et = time.time()
-            print(et - st)
         # self.checkpoint.save(global_step=self._agent_list[0].train_step_counter)
         # for agent in self._agent_list:
         #     agent.checkpoint_save()
 
+    @tf.function
+    def train_single_agent(self, experience, index: int):
+        return self._agent_list[index].train(experience).loss
+
+    # @tf.function
     def eval_policy(self):
         print('Tracing eval_policy')
         self._metric.reset()

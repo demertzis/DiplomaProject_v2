@@ -16,7 +16,7 @@ from config import NUMBER_OF_AGENTS
 from app.models.tf_pwr_env import TFPowerMarketEnv
 
 from app.utils import VehicleDistributionList
-from app.abstract.tf_single_agent import create_single_agent
+from app.abstract.tf_single_agent_3 import create_single_agent
 # tf.config.run_functions_eagerly(True)
 
 with open('data/vehicles.json') as file:
@@ -82,7 +82,7 @@ kwargs = {
 reward_function = rf.vanilla
 reward_name = reward_function.__name__
 
-ckpt_dir = '/'.join(['new_checkpoints',
+ckpt_dir = '/'.join(['checkpoints',
                      str(NUMBER_OF_AGENTS) +
                      '_AGENTS',
                      reward_name])

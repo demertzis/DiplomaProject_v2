@@ -12,7 +12,7 @@ from intersect import intersection
 # from tf_agents.networks import sequential
 import tensorflow as tf
 
-from app.models.tf_utils import my_round
+from app.models.tf_utils import my_round, my_round_vectorized
 
 
 def find_intersection(x1, y1, x2, y2) -> Union[Tuple[float, float], None]:
@@ -277,6 +277,54 @@ def tf_vehicle_generator(coefficient_function: Optional[Callable],
         return vehicle_generator
     else:
         return vehicle_cycle
+
+
+def generate_vehicles(coefficient_function):
+    def create_vehicles(time_of_day):
+        # print('Tracing create_vehicles')
+        day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
+        new_cars = tf.cond(tf.less(time_of_day, 22),
+                           lambda: tf.math.floor(tf.maximum(0.0,
+                                                            tf.random.normal([],
+                                                                             10.0 * day_coefficient,
+                                                                             2.0 * day_coefficient),
+                                                            ),
+                                                 ),
+                           lambda: tf.constant(0.0))
+        new_cars = tf.cast(new_cars, tf.int32)
+        random_current_charge = my_round_vectorized(6.0 + tf.random.uniform((new_cars,)) * 20.0,
+                                                    tf.constant(2))
+        random_target_charge = my_round_vectorized(6.0 + tf.random.uniform((new_cars,)) * 34.0,
+                                                   tf.constant(2))
+        random_departures = tf.cast(tf.minimum(24 - tf.fill((new_cars,), time_of_day) % 24,
+                                               tf.random.uniform((new_cars,), 7, 13, tf.int32)),
+                                    tf.float32)
+        return tf.transpose(tf.stack((random_current_charge,
+                                      random_target_charge,
+                                      random_departures),
+                                     axis=0))
+
+        # departure = lambda: tf.cast(tf.minimum(24 - time_of_day % 24,
+        #                                        tf.random.uniform((), 7, 13, tf.int32)),
+        #                             tf.float32)
+        # current_charge = lambda: my_round(6.0 + tf.random.uniform(()) * 20.0, tf.constant(2))
+        # target_charge = lambda: my_round(6.0 + tf.random.uniform(()) * 34.0, tf.constant(2))
+        # c = lambda i, t: i < new_cars
+        # b = lambda i, t: (i + 1.0,
+        #                   tf.concat((t, tf.expand_dims(tf.stack((current_charge(), target_charge(), departure())),
+        #                                                axis=0)),
+        #                             axis=0))
+        # s = (0.0, tf.zeros((0, 3), tf.float32))
+        # i, vehicles = tf.while_loop(c,
+        #                             b,
+        #                             s,
+        #                             shape_invariants=(tf.TensorSpec((), tf.float32),
+        #                                               tf.TensorSpec((None, 3), tf.float32)))
+        # return vehicles
+
+    return create_vehicles
+
+
 
 
 

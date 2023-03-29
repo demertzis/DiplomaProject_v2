@@ -76,7 +76,6 @@ class PowerMarketEnv(PyEnvironment):
             reward_spec=self.reward_spec(),
         )
 
-    def _step(self, action: array_spec.ArraySpec):
         rewards_array = self._reward_function(self._day_ahead_prices,
                                             self._intra_day_prices[self._time_of_day],
                                             self._time_of_day,

@@ -42,6 +42,7 @@ class TFPowerMarketEnv(TFEnvironment):
     def get_reward_function_name(self):
         return self._reward_function.__name__
 
+    @tf.function
     def _return_last_timestep(self):
         tensor = self._last_time_step
         num_of_agents = tf.shape(tensor)[0] - 15
@@ -54,18 +55,20 @@ class TFPowerMarketEnv(TFEnvironment):
                         tf.expand_dims(discount, axis=0),
                         tf.expand_dims(observation, axis=0))
 
+    @tf.function
     def _current_time_step(self):
         if self._time_of_day == 24 or self._time_of_day == -1:
             rt = self._reset()
             self._last_time_step.assign(tf.concat((tf.cast(rt.step_type, tf.float32),
                                                    rt.discount,
-                                                   tf.reshape(rt.reward, -1),
+                                                   tf.reshape(rt.reward, [-1]),
                                                    tf.squeeze(rt.observation)),
                                                   axis=0))
             return rt
         else:
             return self._return_last_timestep()
 
+    @tf.function
     def _min_max_normalizer(self, tensor: tf.Tensor):
         # if tf.squeeze(tensor).shape.rank > 1:
         #     raise Exception('Only normalizes rank <1 tensors')
@@ -78,6 +81,7 @@ class TFPowerMarketEnv(TFEnvironment):
                 return tensor - tensor + 0.5
         return (tensor - minimum) / (maximum - minimum)
 
+    @tf.function
     def _get_obs(self):
         time = self._time_of_day
         da_prices = self._day_ahead_prices[time:time+12]
@@ -91,6 +95,7 @@ class TFPowerMarketEnv(TFEnvironment):
         final_tensor = tf.ensure_shape(final_tensor, [13])
         return final_tensor
 
+    @tf.function
     def _reset(self) -> ts.TimeStep:
             if self._time_of_day == 24:
                 self._energy_curve.get_next_episode()
@@ -111,6 +116,7 @@ class TFPowerMarketEnv(TFEnvironment):
                                                   axis=0))
             return rt
 
+    @tf.function
     def _step(self, action: tf.Tensor):
         if self._time_of_day == 24 or self._time_of_day == -1:
             return self._reset()

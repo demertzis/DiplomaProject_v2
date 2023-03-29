@@ -11,41 +11,49 @@ from tf_agents.trajectories.time_step import TimeStep
 from app.error_handling import ParkingIsFull
 from app.models.tf_vehicle_4 import VehicleFields
 from app.models.tf_vehicle_4 import Vehicle as Vehicle_4
-from app.models.tf_vehicle_5 import Vehicle as Vehicle_5
+# from app.models.tf_vehicle_5 import Vehicle as Vehicle_5
+import app.models.tf_vehicle_5 as Vehicle_5
+import app.models.tf_vehicle_6 as Vehicle_6
 from app.models.tf_parking_3 import Parking
 from app.models.tf_parking_4 import Parking as Parking_3
 # from app.models.tf_vehicle_3 import Vehicle
 # from app.models.tf_parking import Parking
 from app.models.parking import Parking as Parking_2
 from app.models.vehicle import Vehicle
-from app.utils import vehicle_arrival_generator, VehicleDistributionList, vehicle_arrival_generator_for_tf
-
+from app.utils import vehicle_arrival_generator,\
+    VehicleDistributionList,\
+    vehicle_arrival_generator_for_tf,\
+    generate_vehicles
 
 # tf.config.run_functions_eagerly(True)
 iterations = 10
 
-
-parking = Parking(100, 'train')
-parking_2 = Parking_2(100, 'train')
-parking_3 = Parking_3(100, 'train')
+parking = Parking(200, 'train')
+parking_2 = Parking_2(200, 'train')
+parking_3 = Parking_3(200, 'train')
 
 with open('data/vehicles.json') as file:
     vehicles = VehicleDistributionList(json.load(file))
 
 vehicle_generator = vehicle_arrival_generator(None, list(vehicles))
+vehicles_tensor = tf.ragged.constant(list(vehicles))
 
 def parkings_update():
     coefficient = tf.constant(np.random.uniform(low=-1.0, high=1.0, size=()), dtype=tf.float32)
+    print('coefficient: ', coefficient.numpy())
     start = time.time()
     parking.update(coefficient)
+    # parking.update(tf.constant(0.5))
     end = time.time()
     print('tf_parking', end - start)
     start = time.time()
     parking_2.update(coefficient.numpy())
+    # parking_2.update(tf.constant(0.5).numpy())
     end = time.time()
     print('python_parking', end - start)
     start = time.time()
     parking_3.update(coefficient)
+    # parking_3.update(tf.constant(0.5))
     end = time.time()
     print('tf_new_parking', end - start)
     print_simmilarities()
@@ -120,13 +128,13 @@ def tf_new_park():
         vehicles = tf.pad(vehicles, [[0, 0], [0, 8]], constant_values=0.0)
         parked_tensor = tf.map_fn(lambda t: tf.cond(tf.equal(tf.shape(t)[0], 0),
                                                     lambda: t,
-                                                    lambda: vehicle_computer_2.park(c, c, t)),
+                                                    lambda: Vehicle_5.park(c, c, t)),
                                   vehicles,
                                   parallel_iterations=10)
         return parked_tensor
 
 vehicle_computer = Vehicle_4()
-vehicle_computer_2 = Vehicle_5()
+# vehicle_computer_2 = Vehicle_5()
 # i = 0
 # for _ in range(iterations):
 #     new_cars, _ = next(vehicle_generator)
@@ -170,12 +178,13 @@ def tf_parking_update():
     if tf.shape(vehicles)[1] == 10:
         tf.print("Flag")
     parking_3.assign_vehicles(vehicles)
-
 tst = time.time()
 total_cars = 0
 strategy = tf.distribute.get_strategy()  # Default strategy that works on CPU and single GPU
 #print('Running on CPU instead')
+
 with strategy.scope():
+    t = tf.constant(0)
     for i in range(iterations):
         # new_cars, _ = next(vehicle_generator)
         # total_cars += len
@@ -211,10 +220,27 @@ with strategy.scope():
         print('py_parking: ', time.time() - st)
 
         st = time.time()
+        # vehicles = tf.gather(vehicles_tensor, t).to_tensor()
+        # vehicles = tf.cond(tf.less(0, tf.shape(vehicles)[0]),
+        #                    lambda: tf.concat((vehicles[..., 1:2],
+        #                                       vehicles[..., 2:3],
+        #                                       vehicles[..., 0:1]), axis=1),
+        #                    lambda: tf.zeros((0, 3), tf.float32)
+        #                    )
+        # # num_of_vehicles = tf.shape(vehicles)[0]
+        # max_min_charges = tf.repeat([[60., 0.]], repeats=tf.shape(vehicles)[0], axis=0)
+        # # if num_of_vehicles == 0:
+        # #     vehicles = tf.zeros([0,13], tf.float32)
+        # # else:
+        # #     vehicles = tf.concat((vehicles, max_min_charges), axis=1)
+        # #     vehicles = tf.pad(vehicles, [[0, 0], [0, 8]], constant_values=0.0)
+        # vehicles = tf.concat((vehicles, max_min_charges), axis=1)
+        # vehicles = tf.pad(vehicles, [[0, 0], [0, 8]], constant_values=0.0)
+        # t += 1
         # tf_parking_update()
         parking_3.assign_vehicles(vehicles)
         print('tf_new_parking: ', time.time() - st)
-        print_simmilarities()
+        parkings_update()
 
     # tet = time.time()
     # #print('Total Time: ', tet - tst, 'seconds')

@@ -251,12 +251,12 @@ class DQNPolicy(DDQNPolicy):
         self.collect_data(self.initial_collect_steps) if self.replay_buffer.num_frames().numpy() == 0 else None
 
         self._i = 0
-
+        epoch_st = time.time()
         for _ in range(self.num_iterations):
             # self.trickle_down("raw_train_env.update_garage_list()")
-            st = time.time()
+            # st = time.time()
             self.collect_data(1)  # was used in _step method
-            print('collect_time: ', time.time() - st)
+            # print('collect_time: ', time.time() - st)
             self.trickle_down("_train_step()")
 
             step = self.agent.train_step_counter.numpy()  # TODO check this too
@@ -274,11 +274,14 @@ class DQNPolicy(DDQNPolicy):
                                                                                                              self.compute_avg_agent_loss())
                 )
                 # self.trickle_down('_update_best_eval()')#TODO decide on saving replay buffer seperatelly
-                if self._last_eval > self._best_eval:
-                    self._best_eval = self._last_eval
-                    self.best_checkpointer.save(global_step=self.global_step.numpy())
+                epoch_et = time.time()
+                print('Epoch duration: ', epoch_et - epoch_st)
+                epoch_st = epoch_et
+                # if self._last_eval > self._best_eval:
+                #     self._best_eval = self._last_eval
+                #     self.best_checkpointer.save(global_step=self.global_step.numpy())
             et = time.time()
-            print(et - st)
+            # print(et - st)
         # self.train_checkpointer.initialize_or_restore()
         # self.train_checkpointer.initialize_or_restore().expect_partial()
         self.train_checkpointer.save(global_step=self.global_step.numpy())
