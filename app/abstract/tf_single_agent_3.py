@@ -1,6 +1,4 @@
-import json
 import math
-import random
 from typing import Callable, Optional, List
 
 import tensorflow as tf
@@ -14,22 +12,19 @@ from tf_agents.typing import types
 from tf_agents.agents import TFAgent, data_converter
 from tf_agents.utils import nest_utils, common
 from tf_agents.utils.common import Checkpointer
-from tf_agents.utils.nest_utils import assert_matching_dtypes_and_inner_shapes
 
 from app.models.tf_utils import my_round
-from app.error_handling import ParkingIsFull
 from app.models.tf_parking_4 import Parking
-from app.models.tf_vehicle_4 import Vehicle, VehicleFields
-from app.utils import tf_vehicle_generator, vehicle_arrival_generator_for_tf
 from app.utils import generate_vehicles
 
-from config import MAX_BUFFER_SIZE, VEHICLE_BATTERY_CAPACITY
+from config import VEHICLE_BATTERY_CAPACITY
 
 def create_single_agent(cls: type,
                         vehicle_distribution: List,
                         name: str,
                         num_of_agents: int,
                         ckpt_dir: str,
+                        buffer_max_size: int,
                         capacity_train_garage: int = 100,
                         capacity_eval_garage: int = 200,
                         coefficient_function: Callable = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5,
@@ -68,25 +63,9 @@ def create_single_agent(cls: type,
             self._train_parking = Parking(self._capacity_train_garage, 'train')
             self._eval_parking = Parking(self._capacity_eval_garage, 'eval')
             self._generate_vehicles_train = generate_vehicles(coefficient_function)
-            with open('data/vehicles.json') as file:
-                vehicles = list(json.load(file))
-            self._eval_vehicles = tf.ragged.constant(vehicles)
-            # self._tf_train_vehicle_generator = iter(tf.data.Dataset.from_generator(vehicle_arrival_generator_for_tf
-            #                                                                       (coefficient_function,
-            #                                                                        None,
-            #                                                                        True),
-            #                                                                        output_signature=tf.TensorSpec
-            #                                                                       (shape=(None,
-            #                                                                               None),
-            #                                                                        dtype=tf.float32)).prefetch(tf.data.AUTOTUNE))
-            # self._tf_eval_vehicle_generator = iter(tf.data.Dataset.from_generator(vehicle_arrival_generator_for_tf
-            #                                                                       (None,
-            #                                                                        vehicle_distribution,
-            #                                                                        False),
-            #                                                                       output_signature=tf.TensorSpec
-            #                                                                       (shape=(None,
-            #                                                                               None),
-            #                                                                        dtype=tf.float32)).prefetch(tf.data.AUTOTUNE))
+            # with open('data/vehicles_old.json') as file:
+            #     vehicles = list(json.load(file))
+            self._eval_vehicles = tf.ragged.constant(vehicle_distribution)
             self._private_observations = tf.Variable(tf.zeros([buffer_max_size, 21]),
                                                      shape=[buffer_max_size, 21],
                                                      dtype=tf.float32,
@@ -107,12 +86,12 @@ def create_single_agent(cls: type,
             self._name = name
             self.checkpointer = Checkpointer(
                 ckpt_dir='/'.join([ckpt_dir, self._name]),
-                max_to_keep=3,
-                agent=self,
+                max_to_keep=1,
+                # agent=self,
                 policy=self.policy,
-                # private_observations=self._private_observations,
+                private_observations=self._private_observations,
                 private_actions=self._private_actions,
-                private_index=self._private_index
+                # private_index=self._private_index
             )
             self.policy.action = self._action_wrapper(self.policy.action, False)
             self.collect_policy.action = self._action_wrapper(self.collect_policy.action, True)
@@ -131,8 +110,8 @@ def create_single_agent(cls: type,
                 info_spec=buffer_info_spec,
             )
 
-        def checkpoint_save(self):
-            self.checkpointer.save(self.train_step_counter)
+        def checkpoint_save(self, global_step):
+            self.checkpointer.save(global_step)
 
         @tf.function
         def reset_eval_steps(self):
@@ -147,16 +126,15 @@ def create_single_agent(cls: type,
             self._private_index.assign(index)
 
         @tf.function
-        def _add_new_cars(self, train_mode=True):  # TODO decide on way to choose between distributions
-            #print('Tracing add_new_cars')
+        def _add_new_cars(self, train_mode=True): # TODO decide on way to choose between distributions
+            print('Tracing add_new_cars')
             if train_mode:
                 vehicles = self._generate_vehicles_train(self._time_of_day)
             else:
                 vehicles = tf.gather(self._eval_vehicles, self._eval_steps).to_tensor()
+                # tf.where(tf.equal(tf.shape(vehicles)[0], 0), tf.zeros([0, 3]), vehicles)
                 vehicles = tf.cond(tf.less(0, tf.shape(vehicles)[0]),
-                                   lambda: tf.concat((vehicles[..., 1:2],
-                                                      vehicles[..., 2:3],
-                                                      vehicles[..., 0:1]), axis=1),
+                                   lambda: vehicles,
                                    lambda: tf.zeros((0, 3), tf.float32)
                                   )
             max_min_charges = tf.repeat([[VEHICLE_BATTERY_CAPACITY, 0.]], repeats=tf.shape(vehicles)[0], axis=0)
@@ -167,17 +145,15 @@ def create_single_agent(cls: type,
             else:
                 self._eval_parking.assign_vehicles(vehicles)
 
-
-
         @tf.function
         def _train(self, experience: types.NestedTensor,
                    weights: types.Tensor) -> LossInfo:
-            #print('Tracing train')
+            print('Tracing train')
             return super()._train(self.preprocess_sequence(experience), weights)
 
         @tf.function
         def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, collect_mode = True):
-            #print("Tracing get_load")
+            print('Tracing get_load')
             parking = self._train_parking.return_fields() if collect_mode else self._eval_parking.return_fields()
             length = tf.constant((21.0), dtype=tf.float32)
             max_coefficient = observation[..., 13]
@@ -209,11 +185,11 @@ def create_single_agent(cls: type,
             def wrapped_action_eval(time_step: TimeStep,
                                     policy_state: types.NestedTensor = (),
                                     seed: Optional[types.Seed] = None,) -> PolicyStep:
-                #print('Tracing wrapped_action_eval')
+                print('Tracing wrapped_action_eval')
                 try:
                     time_step = nest_utils.prune_extra_keys(self.policy.time_step_spec, time_step)
-                    policy_state = nest_utils.prune_extra_keys(
-                        self.policy.policy_state_spec, policy_state)
+                    policy_state = nest_utils.prune_extra_keys(self.policy.policy_state_spec,
+                                                               policy_state)
                     nest_utils.assert_same_structure(
                         time_step,
                         self.policy.time_step_spec,
@@ -247,7 +223,7 @@ def create_single_agent(cls: type,
             def wrapped_action_collect(time_step: TimeStep,
                                policy_state: types.NestedTensor = (),
                                seed: Optional[types.Seed] = None,) -> PolicyStep:
-                #print('Tracing wrapped_action_collect')
+                print('Tracing wrapped_action_collect')
                 if ~time_step.is_last():
                     self._add_new_cars(True)
                     self._time_of_day.assign_add(1)
@@ -268,7 +244,7 @@ def create_single_agent(cls: type,
                 time_step_batch_size = tf.shape(time_step.observation)[0]
                 indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
                                              self._private_index) %
-                                            self._buffer_max_size,
+                                             self._buffer_max_size,
                                             [-1, 1])
                 self._private_index.assign_add(time_step_batch_size)
                 self._private_observations.scatter_nd_update(indices_tensor, parking_obs)
@@ -290,7 +266,7 @@ def create_single_agent(cls: type,
             removes the policy info (which is used to fetch the parking state from
             the agents field _private_observations)
             """
-            #print("Tracing preprocess_sequence")
+            print('Tracing preprocess_sequence')
             parking_obs = self._private_observations.gather_nd(experience.policy_info)
             actions = self._private_actions.gather_nd(experience.policy_info)
             augmented_obs = tf.concat(
@@ -306,7 +282,7 @@ def create_single_agent(cls: type,
 
         @tf.function
         def _calculate_vehicle_distribution(self, train: tf.Tensor):
-            #print("Tracing calculate_vehicle_distribution")
+            print('Tracing calculate_vehicle_distribution')
             departure_tensor = tf.cond(tf.constant(train),
                                        lambda: self._train_parking.vehicles,
                                        lambda: self._eval_parking.vehicles)
@@ -324,7 +300,7 @@ def create_single_agent(cls: type,
 
         @tf.function
         def _get_parking_observation(self, train: tf.Tensor):
-            #print('Tracing get_parking_observation')
+            print('Tracing get_parking_observation')
             parking = tf.cond(tf.constant(train),
                               self._train_parking.return_fields,
                               self._eval_parking.return_fields)
@@ -376,7 +352,7 @@ def create_single_agent(cls: type,
                             new_energy,
                             charging_coefficient,
                             threshold_coefficient):
-            #print('Tracing update_parking')
+            print('Tracing update_parking')
             parking = self._train_parking.return_fields() if train else self._eval_parking.return_fields()
             available_energy = new_energy + parking.next_min_discharge - parking.next_min_charge
             max_non_emergency_charge = parking.next_max_charge - parking.next_min_charge
@@ -397,7 +373,7 @@ def create_single_agent(cls: type,
     return SingleAgent(list(vehicle_distribution),
                        coefficient_function,
                        ckpt_dir,
-                       MAX_BUFFER_SIZE,
+                       buffer_max_size,
                        capacity_train_garage,
                        capacity_eval_garage,
                        name,

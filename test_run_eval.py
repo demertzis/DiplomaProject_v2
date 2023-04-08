@@ -39,7 +39,7 @@ market_env_eval = gym.make('PowerEval-v0')
 
 train_env = V2GEnvironment(300, './data/GR-data-new.csv', 'train')
 
-with open("data/vehicles.json", "rb") as file:
+with open("data/vehicles_old.json", "rb") as file:
     vehicles = VehicleDistributionList(json.load(file))
 
 

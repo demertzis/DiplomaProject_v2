@@ -52,16 +52,17 @@ class VehicleDistributionList(list):
         avg_vehicles_list = [0.0] * 24
         for i in range(len(self) // 24 * 24):
             for v in self[i]:
-                for z in range(v[0]):
+                for z in range(v[2]):
                     avg_vehicles_list[(i + 1) % 24 + z - 1] += 1
         self.avg_vehicles_list = [x / total_days for x in avg_vehicles_list]
 
 
 
 
+
 def create_vehicle_distribution(steps: object = 24 * 30 * 6, offset: int = 0, coefficient_function = None) -> List[List[int]]:
     if steps % 24 != 0:
-        raise
+        raise Exception('Invalid steps, need be multiple of 24')
     time_of_day = 0
     # day_coefficient = math.sin(math.pi / 6 * time_of_day + offset) / 2 + 0.5
     coefficient_calculator = lambda x: math.sin(math.pi / 6 * x + offset) / 2 + 0.5 if coefficient_function == None \
@@ -76,11 +77,10 @@ def create_vehicle_distribution(steps: object = 24 * 30 * 6, offset: int = 0, co
         else:
             vehicles.append(
                 [
-                    (
-                        min(
+                    (   min(
                             24 - time_of_day % 24,  # think it's better, allows to have vehicles at 23:00
                             random.randint(7, 12),
-                            ),
+                        ),
                         round(6 + random.random() * 20, 2),
                         round(34 + random.random() * 20, 2),
                     )
@@ -324,7 +324,47 @@ def generate_vehicles(coefficient_function):
 
     return create_vehicles
 
+def calculate_vehicle_avg_distribution_from_tensor(days: int = 100,
+                                                   generator = None):
+    if generator is None:
+        generator = generate_vehicles(lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5)
+    t = tf.constant([[1.0] + [0.0] * 23])
+    @tf.function
+    def loop():
+        result = tf.zeros((0, 24))
+        for i in tf.range(days):
+            tf.autograph.experimental.set_loop_options(maximum_iterations=days,
+                                                       shape_invariants=[(result, tf.TensorShape([None, 24]))])
+            for d in tf.range(24):
+                cars = generator(d)
+                cars_added = tf.repeat(t, tf.shape(cars)[0], axis=0)
+                update_indexes = tf.concat((tf.reshape(tf.range(tf.shape(cars_added)[0]), [-1, 1]),
+                                            tf.cast(cars[..., 2:3], tf.int32)),
+                                           axis=1)
+                cars_added = tf.tensor_scatter_nd_update(cars_added,
+                                                         update_indexes,
+                                                         (-1.0) * tf.ones_like(cars[..., 2]))
+                cars_added = tf.cumsum(cars_added, axis=1)
+                cars_added = tf.roll(cars_added, d, axis=1)
+                result = tf.concat((result, cars_added), axis=0)
+        return tf.reduce_sum(result, axis=0)
+                # for c in cars:
 
 
+                # for c in cars:
+                #     ones = tf.ones([c[2]], tf.float32)
+                #     padding = [[d, 24 - d - tf.cast(c[2], tf.int32)]]
+                #     ones = tf.pad(ones, padding, constant_values=0.0)
+                #     tensor += ones
+
+    return (loop() / tf.cast(days, tf.float32))
 
 
+# def compute_avg_consuption_list(list, generator):
+#     if bool(list) == bool(generator):
+#         raise Exception(" Can't have both a list and a generator, only pick one")
+#     final_list = [0.0] * 24
+#     if list:
+#         days = len(list)
+#         for day in list:
+#

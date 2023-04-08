@@ -32,7 +32,7 @@ parking = Parking(200, 'train')
 parking_2 = Parking_2(200, 'train')
 parking_3 = Parking_3(200, 'train')
 
-with open('data/vehicles.json') as file:
+with open('data/vehicles_old.json') as file:
     vehicles = VehicleDistributionList(json.load(file))
 
 vehicle_generator = vehicle_arrival_generator(None, list(vehicles))

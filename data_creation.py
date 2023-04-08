@@ -11,7 +11,7 @@ from tf_agents.trajectories.time_step import TimeStep
 from app.models.energy import EnergyCurve
 from app.models.garage_env import V2GEnvironment
 # from app.policies.smart_charger import SmartCharger
-from app.policies.smart_charger import DummyV2G
+from app.policies.tf_smart_charger import SmartCharger
 from app.utils import create_vehicle_distribution
 
 from config import GARAGE_LIST
@@ -31,7 +31,7 @@ market_env_eval = gym.make('PowerDataCreation-v0')
 
 # data_creation_env = V2GEnvironment()
 
-for i in range(10):
+for i in range(5):
     vehicles = create_vehicle_distribution(energy_curve_eval.total_episodes() * 24)
 
     charge_list: List[np.float32] = []
@@ -45,7 +45,7 @@ for i in range(10):
 
     env = tf_py_environment.TFPyEnvironment(env)
 
-    policy = DummyV2G(0.5)
+    policy = SmartCharger(0.5)
     # policy = DummyV2G(0.5)
 
     data = np.empty((0, 55), np.float32)
@@ -67,7 +67,13 @@ for i in range(10):
 
 
     for _ in range(energy_curve_eval.total_episodes() * 24):
-        observation = time_step.observation.numpy()[0]
+        old_observation = time_step.observation.numpy()[0]
+        observation = np.concatenate((old_observation[3:15],
+                                      old_observation[33:34],
+                                      old_observation[0:3],
+                                      old_observation[15: 33]),
+                                     axis=0)
+        time_step = time_step._replace(observation=observation)
         action_step = policy.action(time_step)
         action_num = int(action_step.action)
         # create rough (very) estimate of value of different actions based on the fact that action_num was taken
@@ -91,7 +97,7 @@ for i in range(10):
         charge_list.clear()
         GARAGE_LIST.clear()
 
-    with open("colab_data_without_decay.csv", "a") as file:
+    with open("colab_data_new_env.csv", "a") as file:
         np.savetxt(file, data, delimiter=',')
         # data.savetxt(file, sep=',')
 

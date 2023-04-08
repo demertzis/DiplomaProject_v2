@@ -77,7 +77,6 @@ class Parking:
         # self._vehicle_computer = Vehicle()
         self._capacity: tf.Tensor = tf.constant(capacity)
         self.name = name
-        # self.
 
     @property
     def vehicles(self):
@@ -441,7 +440,6 @@ class Parking:
                                          lambda: normalization_charge_constant,
                                          lambda: normalization_discharge_constant)
 
-
         sorted_vehicles = self._sort_vehicles_for_charge_update(
             vehicle_array,
             charging_coefficient,
@@ -454,7 +452,7 @@ class Parking:
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 13], dtype=tf.float32)])
     def _sort_vehicles(self, vehicle_array):
-        #print('Tracing _sort_vehicles')
+        #print('Tracing _sort_vehicles')vectorized_update_current_charge
         departure_tensor = vehicle_array[..., 2]
         sorted_args = tf.argsort(departure_tensor)
         return tf.gather(vehicle_array, sorted_args)

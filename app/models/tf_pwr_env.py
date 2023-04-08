@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, List
 
 import tensorflow as tf
 
@@ -15,6 +15,7 @@ class TFPowerMarketEnv(TFEnvironment):
                  energy_curve: EnergyCurve,
                  reward_function: Callable,
                  number_of_agents: int,
+                 avg_consumption_list: List[float],
                  train_mode: bool = True):
         time_step_spec = tensor_spec.from_spec(TimeStep(
             step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int32, minimum=0, maximum=2),
@@ -33,7 +34,9 @@ class TFPowerMarketEnv(TFEnvironment):
         self._reward_function = reward_function
         self._energy_curve = energy_curve
         self._mode = train_mode
+        self._hard_reset_flag = tf.Variable(False)
         self._discount = tf.constant(DISCOUNT, dtype=tf.float32)
+        self._avg_consumption_tensor = tf.constant(avg_consumption_list)
         self._time_of_day = tf.Variable(-1, dtype=tf.int32)
         self._day_ahead_prices = tf.Variable([0.0] * 24, dtype=tf.float32)
         self._intra_day_prices = tf.Variable([0.0] * 24, dtype=tf.float32)
@@ -41,6 +44,9 @@ class TFPowerMarketEnv(TFEnvironment):
 
     def get_reward_function_name(self):
         return self._reward_function.__name__
+
+    def hard_reset(self):
+        self._hard_reset_flag.assign(True)
 
     @tf.function
     def _return_last_timestep(self):
@@ -99,6 +105,9 @@ class TFPowerMarketEnv(TFEnvironment):
     def _reset(self) -> ts.TimeStep:
             if self._time_of_day == 24:
                 self._energy_curve.get_next_episode()
+            if self._hard_reset_flag:
+                self._energy_curve.reset()
+                self._hard_reset_flag.assign(False)
             self._time_of_day.assign(0)
             self._day_ahead_prices.assign(self._energy_curve.get_current_batch())
             self._intra_day_prices.assign(self._energy_curve.get_current_batch_intra_day())
@@ -123,7 +132,9 @@ class TFPowerMarketEnv(TFEnvironment):
         reward_tensor = self._reward_function(self._day_ahead_prices,
                                               self._intra_day_prices[self._time_of_day],
                                               self._time_of_day,
-                                              action) / (-1000.0)
+                                              action,
+                                              tf.gather(self._avg_consumption_tensor,
+                                                        self._time_of_day)) / (-10000.0)
         #TODO add some kind of monitoring of prices
         self._time_of_day.assign_add(1)
         obs = self._get_obs()

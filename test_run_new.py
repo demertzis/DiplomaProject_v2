@@ -21,7 +21,7 @@ train_env = PowerMarketEnv(energy_curve_train, vanilla, NUMBER_OF_AGENTS, True)
 eval_env = PowerMarketEnv(energy_curve_eval, vanilla, NUMBER_OF_AGENTS, False)
 
 
-with open('data/vehicles.json') as file:
+with open('data/vehicles_old.json') as file:
     vehicles = VehicleDistributionList(json.load(file))
 
 learning_rate = 1e-3

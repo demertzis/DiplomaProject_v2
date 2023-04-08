@@ -41,7 +41,7 @@ market_env_eval: PowerMarketEnv = gym.make('PowerEval-v0')
 
 
 # vehicles = create_vehicle_distribution(2400)
-with open('data/vehicles.json') as file:
+with open('data/vehicles_old.json') as file:
     vehicles = VehicleDistributionList(json.load(file))
 
 charge_list: List[np.float32] = []

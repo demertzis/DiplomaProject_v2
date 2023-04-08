@@ -4,7 +4,7 @@ from tf_agents.trajectories.time_step import TimeStep
 from tf_agents.trajectories.policy_step import PolicyStep
 
 
-class SmartCharger:
+class DummyV2G:
     actions_length = 21
 
     def __init__(self, threshold):

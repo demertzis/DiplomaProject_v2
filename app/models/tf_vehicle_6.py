@@ -157,7 +157,7 @@ def _calculate_charge_curves(vehicles: tf.Tensor):
     zeros = tf.zeros((num_vehicles, 13), tf.float32)
     t = tf.tensor_scatter_nd_update(zeros, tbd_indexes, tf.ones_like(vehicles[..., 2]))
     t = tf.math.cumsum(t, axis=1, reverse=True)
-    multiplier_tensor = tf.concat((tf.math.cumsum(t, exclusive=True,axis=1),
+    multiplier_tensor = tf.concat((tf.math.cumsum(t, exclusive=True, axis=1),
                                    tf.math.cumsum(t, axis=1, exclusive=True, reverse=True)),
                                   axis=1)
     multiplier_tensor = tf.reshape(multiplier_tensor, [-1, 13])
