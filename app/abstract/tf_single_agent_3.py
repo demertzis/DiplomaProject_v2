@@ -70,40 +70,38 @@ def create_single_agent(cls: type,
                                                      shape=[buffer_max_size, 21],
                                                      dtype=tf.float32,
                                                      trainable=False)
-            self._private_actions = tf.Variable(tf.zeros([buffer_max_size], tf.int32),
+            self._private_actions = tf.Variable(tf.zeros([buffer_max_size], tf.int64),
                                                 shape=[buffer_max_size],
-                                                dtype=tf.int32,
+                                                dtype=tf.int64,
                                                 trainable=False)
-            self._private_index = tf.Variable(0, trainable=False)
+            self._private_index = tf.Variable(0, dtype=tf.int64, trainable=False)
             self._buffer_max_size = buffer_max_size
             #TODO decide on weather it's needed
             #TODO remove avg vehicle list, there should not be access to global variables
 
-            self._time_of_day = tf.Variable(0, dtype=tf.int32)
-            self._eval_steps = tf.Variable(0, dtype=tf.int32)
+            self._time_of_day = tf.Variable(0, dtype=tf.int64, trainable=False)
+            self._eval_steps = tf.Variable(0, dtype=tf.int64, trainable=False)
 
             super(cls, self).__init__(*args, **kwargs)
             self._name = name
             self.checkpointer = Checkpointer(
                 ckpt_dir='/'.join([ckpt_dir, self._name]),
                 max_to_keep=1,
-                # agent=self,
                 policy=self.policy,
                 private_observations=self._private_observations,
                 private_actions=self._private_actions,
-                # private_index=self._private_index
             )
             self.policy.action = self._action_wrapper(self.policy.action, False)
             self.collect_policy.action = self._action_wrapper(self.collect_policy.action, True)
 
             buffer_time_step_spec = TimeStep(
-                    step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.int32, minimum=0, maximum=2),
+                    step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.int64, minimum=0, maximum=2),
                     discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.float32, minimum=0.0, maximum=1.0),
                     reward=tensor_spec.TensorSpec(shape=(num_of_agents,), dtype=np.float32),
                     observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=np.float32, minimum=-1., maximum=1.),
                 )
             buffer_info_spec = tensor_spec.TensorSpec(shape=(1,),
-                                                      dtype=tf.int32)
+                                                      dtype=tf.int64)
             self._collect_data_context = data_converter.DataContext(
                 time_step_spec=buffer_time_step_spec,
                 action_spec=(),
@@ -132,11 +130,7 @@ def create_single_agent(cls: type,
                 vehicles = self._generate_vehicles_train(self._time_of_day)
             else:
                 vehicles = tf.gather(self._eval_vehicles, self._eval_steps).to_tensor()
-                # tf.where(tf.equal(tf.shape(vehicles)[0], 0), tf.zeros([0, 3]), vehicles)
-                vehicles = tf.cond(tf.less(0, tf.shape(vehicles)[0]),
-                                   lambda: vehicles,
-                                   lambda: tf.zeros((0, 3), tf.float32)
-                                  )
+                vehicles = tf.reshape(vehicles, [-1, 3])
             max_min_charges = tf.repeat([[VEHICLE_BATTERY_CAPACITY, 0.]], repeats=tf.shape(vehicles)[0], axis=0)
             vehicles = tf.concat((vehicles, max_min_charges), axis=1)
             vehicles = tf.pad(vehicles, [[0, 0], [0, 8]], constant_values=0.0)
@@ -162,13 +156,14 @@ def create_single_agent(cls: type,
             step = (max_coefficient - min_coefficient) / (length-1.0)
             charging_coefficient = tf.cast(action_step, dtype=tf.float32) * step + min_coefficient
             charging_coefficient = my_round(charging_coefficient, 4)
-            is_charging = tf.less_equal(threshold_coefficient, charging_coefficient)
-            is_buying = tf.less_equal(tf.constant(0.0), charging_coefficient)
-            max_energy = parking.next_max_charge if is_buying else parking.next_max_discharge
+            # is_buying = tf.less_equal(tf.constant(0.0), charging_coefficient)
+            # max_energy = parking.next_max_charge if is_buying else parking.next_max_discharge
+            max_energy = tf.where(tf.less_equal(0.0, charging_coefficient),
+                                  parking.next_max_charge,
+                                  parking.next_max_discharge)
             new_energy = my_round(max_energy * charging_coefficient, 2)
 
             self._update_parking(collect_mode,
-                                 is_charging,
                                  new_energy,
                                  charging_coefficient,
                                  threshold_coefficient)
@@ -201,6 +196,11 @@ def create_single_agent(cls: type,
                     if ~time_step.is_last():
                         self._add_new_cars(False)
                         self._eval_steps.assign_add(1)
+                    # index = tf.where(tf.squeeze(time_step.is_last()), 0, 1)
+                    # self._eval_steps.assign_add(tf.cast(index, tf.int64))
+                    # def add_cars():
+                    #     self._add_new_cars(False)
+                    # tf.switch_case(index, [tf.no_op, add_cars])
                     parking_obs = tf.reshape(self._get_parking_observation(False),
                                              [-1,21])
                     augmented_obs = tf.concat((time_step.observation,
@@ -241,7 +241,7 @@ def create_single_agent(cls: type,
                 step = action(new_time_step,
                               policy_state,
                               seed,)
-                time_step_batch_size = tf.shape(time_step.observation)[0]
+                time_step_batch_size = tf.shape(time_step.observation, out_type=tf.int64)[0]
                 indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
                                              self._private_index) %
                                              self._buffer_max_size,
@@ -281,33 +281,32 @@ def create_single_agent(cls: type,
                                       action=actions,)
 
         @tf.function
-        def _calculate_vehicle_distribution(self, train: tf.Tensor):
+        def _calculate_vehicle_distribution(self, train: bool):
             print('Tracing calculate_vehicle_distribution')
-            departure_tensor = tf.cond(tf.constant(train),
-                                       lambda: self._train_parking.vehicles,
-                                       lambda: self._eval_parking.vehicles)
-            capacity = tf.cond(tf.constant(train),
-                               lambda: self._capacity_train_garage,
-                               lambda: self._capacity_eval_garage)
-            departure_tensor = tf.cast(tf.reshape(departure_tensor[..., 2], [-1]), tf.int32)
-            y, idx, count = tf.unique_with_counts(departure_tensor)
-            departure_count_tensor = tf.tensor_scatter_nd_update(tf.zeros((12,), tf.int32),
-                                                                 tf.reshape(y - 1, [-1, 1]),
-                                                                 count,)
+            if train:
+                departure_tensor = self._train_parking.vehicles[..., 2]
+                capacity = self._capacity_train_garage
+            else:
+                departure_tensor = self._eval_parking.vehicles[..., 2]
+                capacity = self._capacity_eval_garage
+            y, idx, count = tf.unique_with_counts(tf.cast(departure_tensor, tf.int64))
+            departure_count_tensor = tf.tensor_scatter_nd_update(tf.zeros((12,), tf.float32),
+                                                                 tf.expand_dims(y - 1, 1),
+                                                                 tf.cast(count, tf.float32))
             departure_distribution_tensor = tf.math.cumsum(departure_count_tensor,
                                                            reverse=True)
-            return tf.cast(departure_distribution_tensor / capacity, tf.float32)
+            return departure_distribution_tensor / capacity
 
         @tf.function
-        def _get_parking_observation(self, train: tf.Tensor):
+        def _get_parking_observation(self, train: bool):
             print('Tracing get_parking_observation')
-            parking = tf.cond(tf.constant(train),
-                              self._train_parking.return_fields,
-                              self._eval_parking.return_fields)
-            capacity = tf.cast(tf.cond(tf.constant(train),
-                                       lambda: self._capacity_train_garage,
-                                       lambda: self._capacity_eval_garage),
-                               dtype=tf.float32)
+            if train:
+                parking = self._train_parking.return_fields()
+                capacity = self._capacity_train_garage
+            else:
+                parking = self._eval_parking.return_fields()
+                capacity = self._capacity_eval_garage
+            capacity = tf.cast(capacity, tf.float32)
             next_max_charge = parking.next_max_charge
             next_min_charge = parking.next_min_charge
             next_max_discharge = parking.next_max_discharge
@@ -316,23 +315,28 @@ def create_single_agent(cls: type,
             max_discharging_rate = parking.max_discharging_rate
             max_acceptable = next_max_charge - next_min_discharge
             min_acceptable = next_max_discharge - next_min_charge
-            max_acceptable_coefficient = tf.cond(tf.not_equal(max_acceptable, 0.0),
-                                                 lambda: max_acceptable / tf.cond(tf.less(0.0, max_acceptable),
-                                                                                  lambda: next_max_charge,
-                                                                                  lambda: next_max_discharge),
-                                                 lambda: 0.0)
-            min_acceptable_coefficient = tf.cond(tf.not_equal(min_acceptable, 0.0),
-                                                 lambda: min_acceptable / tf.cond(tf.less(min_acceptable, 0.0),
-                                                                                  lambda: next_max_charge,
-                                                                                  lambda: next_max_discharge),
-                                                 lambda: 0.0)
-
+            max_acceptable_sign = tf.math.sign(max_acceptable)
+            min_acceptable_sign = tf.math.sign(min_acceptable)
+            max_acceptable_coefficient = tf.math.divide_no_nan(max_acceptable,
+                                                               tf.math.maximum(max_acceptable_sign * \
+                                                                               next_max_charge,
+                                                                               max_acceptable_sign * \
+                                                                               next_max_discharge * \
+                                                                               (-1.0)))
+            min_acceptable_coefficient = tf.math.divide_no_nan(min_acceptable,
+                                                               tf.math.maximum(min_acceptable_sign * \
+                                                                               next_max_charge * \
+                                                                               (-1.0),
+                                                                               min_acceptable_sign * \
+                                                                               next_max_discharge))
             temp_diff = next_min_charge - next_min_discharge
-            threshold_coefficient = tf.cond(tf.not_equal(temp_diff, 0.0),
-                                                 lambda: temp_diff / tf.cond(tf.less(0.0, temp_diff),
-                                                                                  lambda: next_max_charge,
-                                                                                  lambda: next_max_discharge),
-                                                 lambda: 0.0)
+            temp_diff_sign = tf.math.sign(temp_diff)
+            threshold_coefficient = tf.math.divide_no_nan(temp_diff,
+                                                          tf.math.maximum(temp_diff_sign * \
+                                                                          next_max_charge,
+                                                                          temp_diff_sign * \
+                                                                          next_max_discharge * \
+                                                                          (-1.0)))
             return tf.stack([max_acceptable_coefficient,
                              threshold_coefficient,
                              -min_acceptable_coefficient,
@@ -348,7 +352,6 @@ def create_single_agent(cls: type,
         @tf.function
         def _update_parking(self,
                             train,
-                            is_charging,
                             new_energy,
                             charging_coefficient,
                             threshold_coefficient):
@@ -357,13 +360,17 @@ def create_single_agent(cls: type,
             available_energy = new_energy + parking.next_min_discharge - parking.next_min_charge
             max_non_emergency_charge = parking.next_max_charge - parking.next_min_charge
             max_non_emergency_discharge = parking.next_max_discharge - parking.next_min_discharge
-            update_coefficient = tf.cond(
-                tf.less(0.02, my_round(tf.math.abs(charging_coefficient - threshold_coefficient), 2)),
-                lambda: available_energy / tf.cond(is_charging,
-                                                   lambda: max_non_emergency_charge,
-                                                   lambda: max_non_emergency_discharge),
-                lambda: tf.constant(0.0)
-            )
+            is_charging = tf.math.sign(charging_coefficient - threshold_coefficient)
+            update_coefficient = tf.clip_by_value(tf.math.sign(tf.math.abs(charging_coefficient - \
+                                                                           threshold_coefficient) - \
+                                                               0.02),
+                                                  0.0,
+                                                  1.0) * \
+                                 tf.math.divide_no_nan(available_energy,
+                                                       tf.math.maximum(max_non_emergency_charge * \
+                                                                       is_charging,
+                                                                       max_non_emergency_discharge * (-1.) * \
+                                                                       is_charging))
             update_coefficient = my_round(update_coefficient, 2)
             if train:
                 self._train_parking.update(update_coefficient)

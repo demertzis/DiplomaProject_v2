@@ -60,22 +60,21 @@ class Parking:
             description: An array containing all available parking spaces objects
     """
 
-    _next_max_charge = tf.Variable(0.0, dtype=tf.float32)
-    _next_min_charge = tf.Variable(0.0, dtype=tf.float32)
-    _next_max_discharge = tf.Variable(0.0, dtype=tf.float32)
-    _next_min_discharge = tf.Variable(0.0, dtype=tf.float32)
-    _charge_mean_priority = tf.Variable(0.0, dtype=tf.float32)
-    _discharge_mean_priority = tf.Variable(0.0, dtype=tf.float32)
-    _current_charge = tf.Variable(0.0, dtype=tf.float32)
+    _next_max_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    _next_min_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    _next_max_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    _next_min_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    _charge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    _discharge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+    _current_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
     _max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, dtype=tf.float32)
     _max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, dtype=tf.float32)
 
     def __init__(self, capacity: int, name: str):
         self._capacity = tf.constant(capacity)
-        self._vehicles = tf.Variable(tf.zeros(shape=(capacity, 13), dtype=tf.float32))
-        self._num_of_vehicles = tf.Variable((0))
-        # self._vehicle_computer = Vehicle()
-        self._capacity: tf.Tensor = tf.constant(capacity)
+        self._vehicles = tf.Variable(tf.zeros(shape=(capacity, 13), dtype=tf.float32), trainable=False)
+        self._num_of_vehicles = tf.Variable(0, dtype=tf.int64, trainable=False)
+        self._capacity: tf.Tensor = tf.constant(capacity, dtype=tf.int64)
         self.name = name
 
     @property
@@ -197,9 +196,9 @@ class Parking:
         ### Raises:
             ParkingIsFull: The parking has no free spaces
         """
-        #print('Tracing assign_vehicle')
+        print('Tracing assign_vehicle')
         num_of_vehicles = self._num_of_vehicles.value()
-        vehicles_added_number = tf.minimum(tf.shape(vehicles)[0], self._capacity - num_of_vehicles)
+        vehicles_added_number = tf.minimum(tf.shape(vehicles, tf.int64)[0], self._capacity - num_of_vehicles)
         new_vehicles = tf.gather(vehicles, tf.range(vehicles_added_number))
         new_charges = tf.reduce_sum(new_vehicles[..., 0])
         self._current_charge.assign_add(new_charges)
@@ -219,58 +218,26 @@ class Parking:
         """
         Filter out all vehicles that have left the parking
         """
-        #print('Tracing depart_vehicles')
+        print('Tracing depart_vehicles')
         num_of_vehicles = self._num_of_vehicles.value()
         vehicle_list = self._vehicles.value()[:num_of_vehicles]
         staying_vehicles = tf.less(0.0, vehicle_list[..., 2])
         staying_indices = tf.where(staying_vehicles)
         new_vehicle_list = tf.gather(vehicle_list, staying_indices)
         new_vehicle_list = tf.reshape(new_vehicle_list, [-1, 13])
-        num_of_vehicles = tf.shape(new_vehicle_list)[0]
+        num_of_vehicles = tf.shape(new_vehicle_list, out_type=tf.int64)[0]
         self._num_of_vehicles.assign(num_of_vehicles)
-        padding = tf.convert_to_tensor([[0, self._capacity - tf.shape(new_vehicle_list)[0]], [0, 0]], tf.int32)
-        new_vehicle_list = tf.pad(new_vehicle_list, padding, mode='CONSTANT', constant_values=0.0)
+        padding = tf.convert_to_tensor([[0, self._capacity - tf.shape(new_vehicle_list, out_type=tf.int64)[0]],
+                                        [0, 0]],
+                                        tf.int64)
+        new_vehicle_list = tf.pad(new_vehicle_list, padding, mode='CONSTANT', constant_values=0.0, )
         self._vehicles.assign(new_vehicle_list)
 
-    # @tf.function
-    # def _update_single_vehicle(self, vehicle: tf.Tensor, vehicles_counted: tf.Tensor):
-    #     print('Tracing _update_single_vehicle')
-    #     num_of_cars = vehicles_counted
-    #     num_of_cars = tf.cast(num_of_cars, tf.float32)
-    #
-    #     next_max_charge = self._next_max_charge.value() + vehicle[9]
-    #     next_min_charge = self._next_min_charge.value() + vehicle[10]
-    #     next_max_discharge = self._next_max_discharge.value() + vehicle[11]
-    #     next_min_discharge = self._next_min_discharge.value() + vehicle[12]
-    #     next_max_charge = my_round(next_max_charge, tf.constant(2))
-    #     next_min_charge = my_round(next_min_charge, tf.constant(2))
-    #     next_max_discharge = my_round(next_max_discharge, tf.constant(2))
-    #     next_min_discharge = my_round(next_min_discharge, tf.constant(2))
-    #
-    #     self._next_max_charge.assign(next_max_charge)
-    #     self._next_min_charge.assign(next_min_charge)
-    #     self._next_max_discharge.assign(next_max_discharge)
-    #     self._next_min_discharge.assign(next_min_discharge)
-    #
-    #     charge_mean_priority = self._charge_mean_priority.value()
-    #     discharge_mean_priority = self._discharge_mean_priority.value()
-    #     charge_mean_priority = ((num_of_cars - 1.0) *
-    #                                  charge_mean_priority +
-    #                                  vehicle[5]) /\
-    #                                  num_of_cars
-    #     discharge_mean_priority = ((num_of_cars - 1.0) *
-    #                                     discharge_mean_priority +
-    #                                     vehicle[6]) /\
-    #                                     num_of_cars
-    #     charge_mean_priority = my_round(charge_mean_priority, tf.constant(3))
-    #     discharge_mean_priority = my_round(discharge_mean_priority, tf.constant(3))
-    #     self._charge_mean_priority.assign(charge_mean_priority)
-    #     self._discharge_mean_priority.assign(discharge_mean_priority)
 
-    @tf.function(input_signature=[tf.TensorSpec([None, 13], tf.float32), tf.TensorSpec([], tf.int32)])
+    @tf.function(input_signature=[tf.TensorSpec([None, 13], tf.float32), tf.TensorSpec([], tf.int64)])
     def _update_batch_vehicles(self, vehicles: tf.Tensor, vehicles_counted: tf.Tensor):
-        #print('Tracing _update_batch_vehicles')
-        num_cars_added = tf.shape(vehicles)[0]
+        print('Tracing _update_batch_vehicles')
+        num_cars_added = tf.shape(vehicles, out_type=tf.int64)[0]
         num_of_cars = vehicles_counted - num_cars_added
         num_of_cars = tf.cast(num_of_cars, tf.float32)
         priorities = vehicles[..., 5:7]
@@ -288,81 +255,9 @@ class Parking:
         self._charge_mean_priority.assign(my_round(charge_priorities_sum, tf.constant(3)))
         self._discharge_mean_priority.assign(my_round(discharge_priorities_sum, tf.constant(3)))
 
-
-        # tf.print(num_cars_added)
-        # c = lambda i, nmxc, nmnc, nmxd, nmnd, cmp, dmp: i < num_cars_added
-        # b = lambda i, nmxc, nmnc, nmxd, nmnd, cmp, dmp: (i + 1,
-        #                                                  nmxc + vehicles[i][9],
-        #                                                  nmnc + vehicles[i][10],
-        #                                                  nmxd + vehicles[i][11],
-        #                                                  nmnd + vehicles[i][12],
-        #                                                  cmp + vehicles[i][5],
-        #                                                  dmp + vehicles[i][6])
-        # starting_values = (tf.constant(0, tf.int32),
-        #                    self._next_max_charge.value(),
-        #                    self._next_min_charge.value(),
-        #                    self._next_max_discharge.value(),
-        #                    self._next_min_discharge.value(),
-        #                    self._charge_mean_priority.value() * num_of_cars,
-        #                    self._discharge_mean_priority.value() * num_of_cars)
-        # i, \
-        #     next_max_charge, \
-        #     next_min_charge, \
-        #     next_max_discharge, \
-        #     next_min_discharge, \
-        #     charge_mean_priority, \
-        #     discharge_mean_priority = tf.while_loop(c, b, starting_values, parallel_iterations=7)
-
-        # next_max_charge = my_round(next_max_charge, tf.constant(2))
-        # next_min_charge = my_round(next_min_charge, tf.constant(2))
-        # next_max_discharge = my_round(next_max_discharge, tf.constant(2))
-        # next_min_discharge = my_round(next_min_discharge, tf.constant(2))
-        # charge_mean_priority = my_round(charge_mean_priority / tf.cast(vehicles_counted, tf.float32),
-        #                                 tf.constant(3))
-        # discharge_mean_priority = my_round(discharge_mean_priority / tf.cast(vehicles_counted, tf.float32),
-        #                                    tf.constant(3))
-        # self._next_max_charge.assign(next_max_charge)
-        # self._next_min_charge.assign(next_min_charge)
-        # self._next_max_discharge.assign(next_max_discharge)
-        # self._next_min_discharge.assign(next_min_discharge)
-        # self._charge_mean_priority.assign(charge_mean_priority)
-        # self._discharge_mean_priority.assign(discharge_mean_priority)
-
-
     @tf.function
     def _update_parking_state(self):
-        #print('Tracing update_parking_state')
-        # num_of_vehicles = self._num_of_vehicles.value()
-        # vehicle_array = self._vehicles.value()[:num_of_vehicles]
-        # c = lambda i, max_c, min_c, max_d, min_d, cmp, dmp: i < num_of_vehicles
-        # b = lambda i, max_c, min_c, max_d, min_d, cmp, dmp: (
-        #     i + 1,
-        #     max_c + vehicle_array[i][9],
-        #     min_c + vehicle_array[i][10],
-        #     max_d + vehicle_array[i][11],
-        #     min_d + vehicle_array[i][12],
-        #     cmp + vehicle_array[i][5],
-        #     dmp + vehicle_array[i][6],
-        # )
-        # i, \
-        #     next_max_charge, \
-        #     next_min_charge, \
-        #     next_max_discharge, \
-        #     next_min_discharge, \
-        #     charge_mean_priority, \
-        #     discharge_mean_priority = tf.while_loop(c, b, (0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), parallel_iterations=7)
-        # next_max_charge = my_round(next_max_charge, tf.constant(2))
-        # next_min_charge = my_round(next_min_charge, tf.constant(2))
-        # next_max_discharge = my_round(next_max_discharge, tf.constant(2))
-        # next_min_discharge = my_round(next_min_discharge, tf.constant(2))
-        # charge_mean_priority = my_round(charge_mean_priority / tf.cast(num_of_vehicles, tf.float32), tf.constant(3))
-        # discharge_mean_priority = my_round(discharge_mean_priority / tf.cast(num_of_vehicles, tf.float32), tf.constant(3))
-        # self._next_max_charge.assign(next_max_charge)
-        # self._next_min_charge.assign(next_min_charge)
-        # self._next_max_discharge.assign(next_max_discharge)
-        # self._next_min_discharge.assign(next_min_discharge)
-        # self._charge_mean_priority.assign(charge_mean_priority)
-        # self._discharge_mean_priority.assign(discharge_mean_priority)
+        print('Tracing update_parking_state')
         num_of_vehicles = self._num_of_vehicles
         vehicles = self._vehicles.gather_nd(tf.expand_dims(tf.range(num_of_vehicles), axis=1))
         num_of_vehicles = tf.cast(num_of_vehicles, tf.float32)
@@ -381,32 +276,14 @@ class Parking:
 
     @tf.function
     def _calculate_normalization_constant(self):
-        #print('Tracing _calculate_normalization_constant')
-        # normalization_charge_constant = tf.constant(0.0)
-        # normalization_discharge_constant = tf.constant(0.0)
+        print('Tracing _calculate_normalization_constant')
         num_of_vehicles = self._num_of_vehicles.value()
         vehicle_array = self._vehicles.value()[:num_of_vehicles]
         needed_fields_1 = tf.gather(vehicle_array, [9, 11], axis=1)
         needed_fields_2 = tf.gather(vehicle_array, [5, 6], axis=1)
         norm_constants = tf.reduce_sum(needed_fields_1 * needed_fields_2, axis=0)
-        # c = lambda i, ncc, ndc: i < num_of_vehicles
-        # b = lambda i, ncc, ndc: (i + 1,
-        #                          ncc + vehicle_array[i][9] * vehicle_array[i][5],
-        #                          ndc + vehicle_array[i][11] * vehicle_array[i][6])
-        # _,\
-        #     normalization_charge_constant, \
-        #     normalization_discharge_constant = tf.while_loop(c, b, (0, 0.0, 0.0), parallel_iterations=3)
         normalization_charge_constant = norm_constants[0]
         normalization_discharge_constant = norm_constants[1]
-        # if self._next_max_charge.value() != 0.0:
-        #     normalization_charge_constant = my_round(normalization_charge_constant /
-        #                                              self._next_max_charge.value(),
-        #                                              tf.constant(3))
-        #
-        # if self._next_max_discharge.value() != 0.0:
-        #     normalization_discharge_constant = my_round(normalization_discharge_constant /
-        #                                                 self._next_max_discharge.value(),
-        #                                                 tf.constant(3))
         normalization_charge_constant = my_round(tf.math.divide_no_nan(normalization_charge_constant,
                                                                        self._next_max_charge),
                                                  tf.constant(3))
@@ -425,10 +302,8 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The ratio of the used charging/discharging capacity
         """
-        #print('Tracing update_energy_state')
-        is_charging = tf.cond(tf.less(0.0, charging_coefficient),
-                              lambda: tf.constant(True),
-                              lambda: tf.constant(False))
+        print('Tracing update_energy_state')
+        is_charging = tf.where(tf.less(0.0, charging_coefficient), 1.0, -1.0)
         num_of_vehicles = self._num_of_vehicles.value()
         vehicle_array = self._vehicles.value()[:num_of_vehicles]
         vehicle_array = Vehicle.update_emergency_demand(vehicle_array)
@@ -436,15 +311,12 @@ class Parking:
         self._next_max_discharge.assign_sub(self._next_min_discharge.value())
 
         normalization_charge_constant, normalization_discharge_constant = self._calculate_normalization_constant()
-        normalization_constant = tf.cond(is_charging,
-                                         lambda: normalization_charge_constant,
-                                         lambda: normalization_discharge_constant)
-
+        normalization_constant = tf.math.maximum(normalization_charge_constant * is_charging,
+                                                 (-1.0) * normalization_discharge_constant * is_charging)
         sorted_vehicles = self._sort_vehicles_for_charge_update(
             vehicle_array,
             charging_coefficient,
             normalization_constant,
-            is_charging
         )
         new_vehicles = Vehicle.update_current_charge(charging_coefficient, normalization_constant, sorted_vehicles)
         num_of_vehicles = tf.shape(vehicle_array)[0]
@@ -452,29 +324,22 @@ class Parking:
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 13], dtype=tf.float32)])
     def _sort_vehicles(self, vehicle_array):
-        #print('Tracing _sort_vehicles')vectorized_update_current_charge
+        print('Tracing _sort_vehicles')
         departure_tensor = vehicle_array[..., 2]
         sorted_args = tf.argsort(departure_tensor)
         return tf.gather(vehicle_array, sorted_args)
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 13], dtype=tf.float32, name='vehicle_array'),
-                                  # tf.TensorSpec(shape=(), dtype=tf.float32, name='sign'),
                                   tf.TensorSpec(shape=(), dtype=tf.float32, name='charging_coefficient'),
-                                  tf.TensorSpec(shape=(), dtype=tf.float32, name='normalization_constant'),
-                                  tf.TensorSpec(shape=(), dtype=tf.bool, name='is_charging'),])
+                                  tf.TensorSpec(shape=(), dtype=tf.float32, name='normalization_constant')])
     def _sort_vehicles_for_charge_update(self,
                                          vehicle_array,
-                                         # sign,
                                          charging_coefficient,
-                                         normalization_constant,
-                                         is_charging):
-        #print('Tracing _sort_vehicles_for_charge_update')
-        tensor_mapping = tf.cond(is_charging,
-                                 lambda: charging_coefficient * \
-                                         (1.0 + vehicle_array[..., 5] - normalization_constant),
-                                 lambda: (-1.0) * charging_coefficient * \
-                                         (1.0 + vehicle_array[..., 6] - normalization_constant)
-                                )
+                                         normalization_constant):
+        print('Tracing _sort_vehicles_for_charge_update')
+        tensor_1 = charging_coefficient * (1.0 + vehicle_array[..., 5] - normalization_constant)
+        tensor_2 = charging_coefficient * (1.0 + vehicle_array[..., 6] - normalization_constant)
+        tensor_mapping = tf.where(tf.less(0.0, charging_coefficient), tensor_1, tensor_2)
         sorted_args = tf.argsort(tensor_mapping, direction='DESCENDING')
         return tf.gather(vehicle_array, sorted_args)
 
@@ -487,7 +352,7 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The charging coefficient
         """
-        #print('Tracing update (parking)')
+        print('Tracing update (parking)')
         self.update_energy_state(charging_coefficient)
         self.depart_vehicles()
         self._update_parking_state()

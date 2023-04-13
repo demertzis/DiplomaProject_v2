@@ -42,18 +42,16 @@ class MultiAgentPolicyWrapper(TFPolicy):
             time_step_spec,
             action_spec,
             policy_state_spec,
-            info_spec=info_spec or tensor_spec.TensorSpec(shape=(1,), dtype=tf.int32),
+            info_spec=info_spec or tensor_spec.TensorSpec(shape=(1,), dtype=tf.int64),
         )
         self._policy_list = policy_list
-        self._global_step = tf.Variable(global_step, dtype=tf.int32)
+        self._global_step = tf.Variable(global_step, dtype=tf.int64, trainable=False)
         self._collect = collect
         self._num_of_agents = len(policy_list)
-        self._time_step_float_tensors = tf.Variable(tf.zeros((14 + self._num_of_agents,), tf.float32))
-        self._time_step_int_tensor = tf.Variable(0)
-        self._agent_id_tensor = tf.cast(tf.range(self._num_of_agents), tf.float32)
-        self._policy_action_dict = {i: lambda: policy_list[i].action(self._get_time_step(),
-                                                                     ()) for i in range(self._num_of_agents)}
-
+        self._time_step_float_tensors = tf.Variable(tf.zeros((14 + self._num_of_agents,), tf.float32), trainable=False)
+        self._time_step_int_tensor = tf.Variable(0, dtype=tf.int64, trainable=False)
+        self._agent_id_tensor = tf.range(self._num_of_agents, dtype=tf.int32) #has to be int32 because of switch_case
+        self._policy_action_dict = [lambda: policy.action(self._get_time_step(), ()) for policy in self._policy_list]
     @property
     def global_step(self):
         return self._global_step.value()
@@ -84,10 +82,11 @@ class MultiAgentPolicyWrapper(TFPolicy):
                                              time_step.reward[0]), axis=0)
         int_time_step_members = time_step.step_type[0]
         self._time_step_float_tensors.assign(float_time_step_members)
-        self._time_step_int_tensor.assign(int_time_step_members)
-        action_tensor = tf.map_fn(lambda id: tf.switch_case(tf.cast(id, tf.int32),
+        self._time_step_int_tensor.assign(tf.cast(int_time_step_members, tf.int64))
+        action_tensor = tf.map_fn(lambda id: tf.switch_case(id,
                                                             self._policy_action_dict).action,
                                   self._agent_id_tensor,
+                                  fn_output_signature=tf.float32,
                                   parallel_iterations=self._num_of_agents)[0]
         info = tf.fill([tf.shape(time_step.observation)[0], 1], self._global_step % MAX_BUFFER_SIZE)
         if self._collect:
@@ -127,9 +126,9 @@ class MultipleAgents:
         self._collect_data_context = data_converter.DataContext(
             time_step_spec=train_env.time_step_spec(),
             action_spec=(),
-            info_spec=tensor_spec.TensorSpec(shape=(1,), dtype=tf.int32),
+            info_spec=tensor_spec.TensorSpec(shape=(1,), dtype=tf.int64),
         )
-        self.global_step = tf.Variable(0)
+        self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False)
         self.replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(self.collect_data_spec,
                                                                             batch_size=self.train_env.batch_size,
                                                                             max_length=self.replay_buffer_capacity)
@@ -145,7 +144,7 @@ class MultipleAgents:
                                                        self.train_env.time_step_spec(),
                                                        self.train_env.action_spec(),
                                                        (),
-                                                       tensor_spec.TensorSpec((1,), tf.int32),
+                                                       tensor_spec.TensorSpec((1,), tf.int64),
                                                        self.global_step.value(),
                                                        True)
         self.policy = MultiAgentPolicyWrapper([agent.policy for agent in self._agent_list],
@@ -162,12 +161,7 @@ class MultipleAgents:
                                               self.policy,
                                               [self._metric],
                                               num_steps=steps)
-        # self._eval_driver = PyDriver(self.eval_env,
-        #                              self.policy,
-        #                              [self._metric],
-        #                              max_steps=steps)
         for agent in self._agent_list:
-            # agent.initialize()
             agent.train = common.function(agent.train)
             agent.private_index = self.global_step
 
@@ -178,6 +172,17 @@ class MultipleAgents:
     @property
     def collect_data_spec(self):
         return self._collect_data_context.trajectory_spec
+
+    @tf.function
+    def _train_step(self, experience):
+        train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
+        train_loss = tf.map_fn(lambda id: tf.switch_case(id,
+                                                         train_list),
+                               tf.range(self._number_of_agents, dtype=tf.int32),
+                               fn_output_signature=tf.float32,
+                               parallel_iterations=self._number_of_agents)
+        return train_loss
+
 
     def train(self):
         best_avg_return = self.eval_policy()
@@ -191,12 +196,10 @@ class MultipleAgents:
             DynamicStepDriver(self.train_env,
                               self.collect_policy,
                               [lambda traj: self.replay_buffer.add_batch(traj.replace(action=()))],
-                               # lambda traj: self.global_step.assign_add(1)],
                               num_steps=self.initial_collect_steps).run()
         collect_driver = DynamicStepDriver(self.train_env,
                                            self.collect_policy,
                                            [lambda traj: self.replay_buffer.add_batch(traj.replace(action=()))],
-                                            # lambda traj: self.global_step.assign_add(1)],
                                            num_steps=self.collect_steps_per_iteration)
         time_step = self.train_env.reset()
         epoch_st = time.time()
@@ -209,8 +212,10 @@ class MultipleAgents:
             # print('collect_time: ', ct - st)
             experience, ___ = next(iterator)
             tst = time.time()
-            train_loss = [agent.train(experience).loss for agent in self._agent_list]
+            # train_loss = [agent.train(experience).loss for agent in self._agent_list]
+            train_loss = self._train_step(experience)
             loss_acc = [loss_acc[e] + t.numpy() for e, t in enumerate(train_loss)]
+
             epoch_train_st += (time.time() - tst)
             step = self._agent_list[0].train_step_counter
             if step % self.log_interval == 0:

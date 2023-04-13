@@ -1,10 +1,6 @@
-from tf_agents.typing import types
 from tf_agents.utils import common
 
 from app.models.tf_utils import tf_find_intersection_vectorized, my_pad
-import json
-from typing import Any, Dict, NamedTuple
-import config
 import tensorflow as tf
 import tensorflow_probability as tfp
 
@@ -54,7 +50,7 @@ def _calculate_next_max_charge(current_charge: tf.Tensor,
     ### Returns:
         float : The next max charge
     """
-    #print('Tracing calculate_next_max_charge')
+    print('Tracing calculate_next_max_charge')
     final_tensor = tf.math.reduce_min(tf.stack((vehicles[..., 7] + current_charge,
                                                 vehicles[..., 3],
                                                 tf.clip_by_value((time_before_departure - 1.0),
@@ -92,7 +88,7 @@ def _calculate_next_min_charge(current_charge: tf.Tensor,
     ### Returns:
         float : The next min charge
     """
-    #print('Tracing calculate_next_min_charge')
+    print('Tracing calculate_next_min_charge')
     final_tensor = tf.math.reduce_max(tf.stack((current_charge - vehicles[..., 8],
                                                 vehicles[..., 4],
                                                 vehicles[..., 1] - \
@@ -293,9 +289,10 @@ def update_current_charge(charging_coefficient: tf.Tensor,
         float : The residue energy that wasn't allocated by this vehicle
     """
     print('Tracing vectorized_update_current_charge')
-    priority, next_max_energy, sign = tf.cond(tf.less_equal(0.0, charging_coefficient),
-                                              lambda: (vehicles[..., 5], vehicles[..., 9], tf.constant(1.0)),
-                                              lambda: (vehicles[..., 6], vehicles[..., 11], tf.constant(-1.0)),)
+    condition = tf.less_equal(0.0, charging_coefficient)
+    priority = tf.where(condition, vehicles[..., 5], vehicles[..., 6])
+    next_max_energy = tf.where(condition, vehicles[..., 9], vehicles[..., 11])
+    sign = tf.where(condition, 1.0, -1.0)
     new_vehicle_energy = (next_max_energy * \
                           charging_coefficient * \
                           (1.0 + priority - normalization_constant)) * \

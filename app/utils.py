@@ -281,47 +281,27 @@ def tf_vehicle_generator(coefficient_function: Optional[Callable],
 
 def generate_vehicles(coefficient_function):
     def create_vehicles(time_of_day):
-        # print('Tracing create_vehicles')
+        print('Tracing create_vehicles')
         day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
-        new_cars = tf.cond(tf.less(time_of_day, 22),
-                           lambda: tf.math.floor(tf.maximum(0.0,
-                                                            tf.random.normal([],
-                                                                             10.0 * day_coefficient,
-                                                                             2.0 * day_coefficient),
-                                                            ),
-                                                 ),
-                           lambda: tf.constant(0.0))
-        new_cars = tf.cast(new_cars, tf.int32)
+        possible_added = tf.math.floor(tf.maximum(0.0,
+                                                  tf.random.normal([],
+                                                                   10.0 * day_coefficient,
+                                                                   2.0 * day_coefficient),
+                                                  ),
+                                      )
+        new_cars = tf.where(tf.less(time_of_day, 22), possible_added, 0.0)
+        new_cars = tf.cast(new_cars, tf.int64)
         random_current_charge = my_round_vectorized(6.0 + tf.random.uniform((new_cars,)) * 20.0,
                                                     tf.constant(2))
         random_target_charge = my_round_vectorized(6.0 + tf.random.uniform((new_cars,)) * 34.0,
                                                    tf.constant(2))
         random_departures = tf.cast(tf.minimum(24 - tf.fill((new_cars,), time_of_day) % 24,
-                                               tf.random.uniform((new_cars,), 7, 13, tf.int32)),
+                                               tf.random.uniform((new_cars,), 7, 13, dtype=tf.int64)),
                                     tf.float32)
         return tf.transpose(tf.stack((random_current_charge,
                                       random_target_charge,
                                       random_departures),
                                      axis=0))
-
-        # departure = lambda: tf.cast(tf.minimum(24 - time_of_day % 24,
-        #                                        tf.random.uniform((), 7, 13, tf.int32)),
-        #                             tf.float32)
-        # current_charge = lambda: my_round(6.0 + tf.random.uniform(()) * 20.0, tf.constant(2))
-        # target_charge = lambda: my_round(6.0 + tf.random.uniform(()) * 34.0, tf.constant(2))
-        # c = lambda i, t: i < new_cars
-        # b = lambda i, t: (i + 1.0,
-        #                   tf.concat((t, tf.expand_dims(tf.stack((current_charge(), target_charge(), departure())),
-        #                                                axis=0)),
-        #                             axis=0))
-        # s = (0.0, tf.zeros((0, 3), tf.float32))
-        # i, vehicles = tf.while_loop(c,
-        #                             b,
-        #                             s,
-        #                             shape_invariants=(tf.TensorSpec((), tf.float32),
-        #                                               tf.TensorSpec((None, 3), tf.float32)))
-        # return vehicles
-
     return create_vehicles
 
 def calculate_vehicle_avg_distribution_from_tensor(days: int = 100,
@@ -335,11 +315,11 @@ def calculate_vehicle_avg_distribution_from_tensor(days: int = 100,
         for i in tf.range(days):
             tf.autograph.experimental.set_loop_options(maximum_iterations=days,
                                                        shape_invariants=[(result, tf.TensorShape([None, 24]))])
-            for d in tf.range(24):
+            for d in tf.range(24, dtype=tf.int64):
                 cars = generator(d)
                 cars_added = tf.repeat(t, tf.shape(cars)[0], axis=0)
-                update_indexes = tf.concat((tf.reshape(tf.range(tf.shape(cars_added)[0]), [-1, 1]),
-                                            tf.cast(cars[..., 2:3], tf.int32)),
+                update_indexes = tf.concat((tf.reshape(tf.range(tf.shape(cars_added)[0], dtype=tf.int64), [-1, 1]),
+                                            tf.cast(cars[..., 2:3], tf.int64)),
                                            axis=1)
                 cars_added = tf.tensor_scatter_nd_update(cars_added,
                                                          update_indexes,
