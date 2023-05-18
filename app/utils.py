@@ -12,7 +12,7 @@ from intersect import intersection
 # from tf_agents.networks import sequential
 import tensorflow as tf
 
-from app.models.tf_utils import my_round, my_round_vectorized
+from app.models.tf_utils import my_round, my_round_vectorized, my_round_16
 
 
 def find_intersection(x1, y1, x2, y2) -> Union[Tuple[float, float], None]:
@@ -52,14 +52,32 @@ class VehicleDistributionList(list):
         avg_vehicles_list = [0.0] * 24
         for i in range(len(self) // 24 * 24):
             for v in self[i]:
-                for z in range(v[2]):
+                for z in range(int(v[2])):
                     avg_vehicles_list[(i + 1) % 24 + z - 1] += 1
         self.avg_vehicles_list = [x / total_days for x in avg_vehicles_list]
 
+class VehicleDistributionListConstantShape(list):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.avg_vehicles_list = [0] * 24
+        if len(self) > 0: self.compute_avg_vehicles_list()
 
-
-
-
+    def compute_avg_vehicles_list(self):
+        total_days = len(self) // 24
+        if total_days <= 0:
+            return
+        tensor_vehicles = tf.cast(tf.constant(self, tf.float32)[..., 2], tf.int32)
+        flattened_vehicles = tf.reshape(tensor_vehicles, [-1])
+        unrolled_tensor = tf.concat((tf.ones((12,), tf.int32), tf.zeros((24,), tf.int32)), axis=0)
+        flattened_tensor = tf.vectorized_map(lambda t: tf.roll(tf.roll(unrolled_tensor, t[0], 0)[12:36],
+                                                                 (t[1] // tf.shape(tensor_vehicles)[1]) % 24,
+                                                                 0),
+                                               tf.stack((flattened_vehicles,
+                                                         tf.range(tf.shape(flattened_vehicles)[0])),
+                                                        axis=1)
+                                               )
+        final_sum = tf.reduce_sum(flattened_tensor, axis=0) / total_days
+        self.avg_vehicles_list = np.round(final_sum.numpy(), 2).tolist()
 def create_vehicle_distribution(steps: object = 24 * 30 * 6, offset: int = 0, coefficient_function = None) -> List[List[int]]:
     if steps % 24 != 0:
         raise Exception('Invalid steps, need be multiple of 24')
@@ -278,10 +296,36 @@ def tf_vehicle_generator(coefficient_function: Optional[Callable],
     else:
         return vehicle_cycle
 
+def generate_vehicles_constant_shape(coefficient_function, capacity: int):
+    def create_vehicles(time_of_day):
+        # print('Tracing create_vehicles')
+        day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
+        possible_added = tf.math.floor(tf.maximum(0.0,
+                                                  tf.random.normal([],
+                                                                   10.0 * day_coefficient,
+                                                                   2.0 * day_coefficient),
+                                                  ),
+                                       )
+        new_cars = tf.where(tf.less(time_of_day, 22), possible_added, 0.0)
+        new_cars = tf.cast(new_cars, tf.int64)
+        mult_tensor = tf.where(tf.less(tf.expand_dims(tf.range(capacity, dtype=tf.int64), axis=1), new_cars), 1.0, 0.0)
+        random_current_charge = my_round_vectorized(6.0 + tf.random.uniform((capacity,)) * 20.0,
+                                                    tf.constant(2))
+        random_target_charge = my_round_vectorized(6.0 + tf.random.uniform((capacity,)) * 34.0,
+                                                   tf.constant(2))
+        random_departures = tf.cast(tf.minimum(24 - tf.fill((capacity,), time_of_day) % 24,
+                                               tf.random.uniform((capacity,), 7, 13, dtype=tf.int64)),
+                                    tf.float32)
+        return tf.transpose(tf.stack((random_current_charge,
+                                      random_target_charge,
+                                      random_departures),
+                                     axis=0)) * mult_tensor
+    return create_vehicles
+
 
 def generate_vehicles(coefficient_function):
     def create_vehicles(time_of_day):
-        print('Tracing create_vehicles')
+        #print('Tracing create_vehicles')
         day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
         possible_added = tf.math.floor(tf.maximum(0.0,
                                                   tf.random.normal([],
@@ -303,6 +347,32 @@ def generate_vehicles(coefficient_function):
                                       random_departures),
                                      axis=0))
     return create_vehicles
+
+def generate_vehicles_16(coefficient_function):
+    def create_vehicles(time_of_day):
+        #print('Tracing create_vehicles')
+        day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
+        possible_added = tf.math.floor(tf.maximum(0.0,
+                                                  tf.random.normal([],
+                                                                   10.0 * day_coefficient,
+                                                                   2.0 * day_coefficient),
+                                                  ),
+                                      )
+        new_cars = tf.where(tf.less(time_of_day, 22), possible_added, 0.0)
+        new_cars = tf.cast(new_cars, tf.int64)
+        random_current_charge = my_round_16(6.0 + tf.random.uniform((new_cars,), dtype=tf.float16) * 20.0,
+                                                    tf.constant(2))
+        random_target_charge = my_round_16(6.0 + tf.random.uniform((new_cars,), dtype=tf.float16) * 34.0,
+                                                   tf.constant(2))
+        random_departures = tf.cast(tf.minimum(24 - tf.fill((new_cars,), time_of_day) % 24,
+                                               tf.random.uniform((new_cars,), 7, 13, dtype=tf.int64)),
+                                    tf.float16)
+        return tf.transpose(tf.stack((random_current_charge,
+                                      random_target_charge,
+                                      random_departures),
+                                     axis=0))
+    return create_vehicles
+
 
 def calculate_vehicle_avg_distribution_from_tensor(days: int = 100,
                                                    generator = None):
@@ -328,16 +398,28 @@ def calculate_vehicle_avg_distribution_from_tensor(days: int = 100,
                 cars_added = tf.roll(cars_added, d, axis=1)
                 result = tf.concat((result, cars_added), axis=0)
         return tf.reduce_sum(result, axis=0)
-                # for c in cars:
-
-
-                # for c in cars:
-                #     ones = tf.ones([c[2]], tf.float32)
-                #     padding = [[d, 24 - d - tf.cast(c[2], tf.int32)]]
-                #     ones = tf.pad(ones, padding, constant_values=0.0)
-                #     tensor += ones
-
     return (loop() / tf.cast(days, tf.float32))
+
+def calculate_avg_distribution_constant_shape(days: int = 100,
+                                              generator = None):
+    if generator is None:
+        generator = generate_vehicles(lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5)
+    unrolled_tensor = tf.concat((tf.ones((12,), tf.int32), tf.zeros((24,), tf.int32)), axis=0)
+    def get_single_day_departure_tensor(time):
+        departures = tf.cast(generator(time)[..., 2], tf.int32)
+        departure_tensor = tf.vectorized_map(lambda t: tf.roll(unrolled_tensor, t, axis=0)[12:36],
+                                             departures)
+        return tf.reduce_sum(departure_tensor, axis=0)
+    total_cars = tf.vectorized_map(lambda t: tf.roll(get_single_day_departure_tensor(t % 24),
+                                                     t % 24,
+                                                     axis=0),
+                                   tf.range(days * 24, dtype=tf.int64))
+    final_tensor = tf.cast(tf.reduce_sum(total_cars, axis=0) / days, tf.float32)
+    return final_tensor
+    
+
+    
+
 
 
 # def compute_avg_consuption_list(list, generator):

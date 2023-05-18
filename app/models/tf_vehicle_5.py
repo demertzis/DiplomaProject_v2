@@ -408,7 +408,7 @@ def update_emergency_demand(vehicle: tf.Tensor):
 # def toJson(self) -> Dict[str, Any]:
 #     return {
 #         # "class": __name__,
-#         # "name": self.name,
+#         # "_name": self._name,
 #         "current_change": self._current_charge,
 #         "target_charge": self._target_charge,
 #         # "original_target_charge": self._original_target_charge,

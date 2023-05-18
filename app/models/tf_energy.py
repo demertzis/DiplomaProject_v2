@@ -4,7 +4,7 @@ from typing import List, Tuple
 import tensorflow as tf
 
 
-class EnergyCurve:
+class EnergyCurve(tf.Module):
     """
     A class that holds the energy curve along with its derivatives
 
@@ -37,14 +37,14 @@ class EnergyCurve:
                 counter += 1
         if len(self._data) % 24 != 0:
             raise Exception('Energy price data contain incomplete day')
-        self.name = name
+        self._name = name
         self._raw_y = tf.convert_to_tensor(self._raw_y)
         # self._data = tf.convert_to_tensor(self._data)
         # self._x = tf.convert_to_tensor(self._x)
         # self._y = tf.Variable(tf.zeros(tf.shape(tf.reshape(self._raw_y, [-1, 2])), tf.float32), trainable=False)
         self._y = tf.Variable([[x,y] for z, x, y in self._data], trainable=False)
         self._normalizing_coefficient = tf.convert_to_tensor(self._normalizing_coefficient)
-        self.randomize_data(self.name == 'eval')
+        self.randomize_data(self._name == 'eval')
         self._start = tf.Variable(0, dtype=tf.int64, trainable=False)
 
     def total_episodes(self):
@@ -87,7 +87,7 @@ class EnergyCurve:
         ### Returns
             float[24] : A 24 size array with the energy cost
         """
-        print('Tracing get_current_batch')
+        #print('Tracing get_current_batch')
         start = self._start
         return_tensor = self._y[start:start + 24, 0]
         if normalized:
@@ -105,7 +105,7 @@ class EnergyCurve:
         ### Returns
             float[24] : A 24 size array with the energy cost
         """
-        print('Tracing get_current_batch_intra_day')
+        #print('Tracing get_current_batch_intra_day')
         start = self._start
         return_tensor = self._y[start:start + 24, 1]
         if normalized:
@@ -161,15 +161,15 @@ class EnergyCurve:
 
     @tf.function
     def get_next_episode(self):
-        print('Tracing get_next_episode')
+        #print('Tracing get_next_episode')
         new_start = (self._start + 24) % len(self._data)
         self._start.assign(new_start)
         tf.switch_case(tf.cast(new_start, tf.int32), [self.reset], default=tf.no_op, name='next_episode_switch')
 
     @tf.function
     def reset(self):
-        print('Tracing reset')
-        self.randomize_data(self.name == 'eval')
+        #print('Tracing reset')
+        self.randomize_data(self._name == 'eval')
         self._start.assign(0)
 
     def get_current_cost(self):
@@ -185,7 +185,7 @@ class EnergyCurve:
         return self._y[self._start][1]
 
     def randomize_data(self, is_eval):
-        print('Tracing randomize_data')
+        #print('Tracing randomize_data')
         # if is_eval:
         #     # self._y.assign([(val, val_intra_day) for _, val, val_intra_day in self._data])
         #     data = [[x,y] for z, x, y in self._data]

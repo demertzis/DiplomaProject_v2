@@ -118,10 +118,10 @@ class MultipleAgents:
         self.global_step = tf.Variable(0)
 
         # self._action_spec = array_spec.BoundedArraySpec(
-        #     shape=(), dtype=np.float32, minimum=-np.inf, maximum=np.inf, name="action"
+        #     shape=(), dtype=np.float32, minimum=-np.inf, maximum=np.inf, _name="action"
         # )
         # self._observation_spec = array_spec.BoundedArraySpec(
-        #     shape=(13,), dtype=np.float32, minimum=-1., maximum=1., name="observation"
+        #     shape=(13,), dtype=np.float32, minimum=-1., maximum=1., _name="observation"
         # )
 
         self._agent_list: List[SingleAgent] = agents_list
@@ -209,7 +209,7 @@ class MultipleAgents:
                 sys.stdout.write("\033[K")
                 sys.stdout.write(
                     f'[{"=" * percentage + " " * (70 - percentage)}] {self._name} self._loss: {train_loss} ')
-                sys.stdout.flush()  # TODO denote agent's name
+                sys.stdout.flush()  # TODO denote agent's _name
 
             for agent in self._agent_list: agent.checkpointer.save(self.global_step.numpy())
             replay_buffer.py_client.checkpoint()

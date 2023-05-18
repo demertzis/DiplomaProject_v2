@@ -76,7 +76,7 @@ class MultiAgentPolicyWrapper(TFPolicy):
     def _action(self, time_step: ts.TimeStep,
                       policy_state: types.NestedTensor,
                       seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
-        print('Tracing _action')
+        #print('Tracing _action')
         float_time_step_members = tf.concat((time_step.observation[0],
                                              time_step.discount,
                                              time_step.reward[0]), axis=0)
@@ -162,7 +162,7 @@ class MultipleAgents:
                                               [self._metric],
                                               num_steps=steps)
         for agent in self._agent_list:
-            agent.train = common.function(agent.train)
+            agent.train = tf.function(agent.train)
             agent.private_index = self.global_step
 
     @property
@@ -230,7 +230,7 @@ class MultipleAgents:
                 print('Epoch: ', epoch + 1, '            Avg_return = ', avg_return)
                 epoch_et = time.time()
                 print('Epoch duration: ', epoch_et - epoch_st)
-                print('Train duration: ', epoch_train_st)
+                #print('Train duration: ', epoch_train_st)
                 epoch_train_st = 0.0
                 epoch_st = epoch_et
                 self.returns.append(avg_return)
@@ -256,7 +256,7 @@ class MultipleAgents:
 
     # @tf.function
     def eval_policy(self):
-        print('Tracing eval_policy')
+        #print('Tracing eval_policy')
         self._metric.reset()
         for agent in self._agent_list:
             agent.reset_eval_steps()

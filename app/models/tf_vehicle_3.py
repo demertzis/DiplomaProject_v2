@@ -67,7 +67,7 @@ class Vehicle:
         total_stay: int,
         max_charge: float,
         min_charge: float,
-        # name: str,
+        # _name: str,
     ):
         self._current_charge = tf.Variable(initial_charge, dtype=tf.float32)
         self._target_charge = tf.Variable(target_charge, dtype=tf.float32)
@@ -83,7 +83,7 @@ class Vehicle:
         self._next_min_charge = tf.Variable(0.0, dtype=tf.float32)
         self._next_max_discharge = tf.Variable(0.0, dtype=tf.float32)
         self._next_min_discharge = tf.Variable(0.0, dtype=tf.float32)
-        # self.name = name
+        # self._name = _name
         # self._before_charge = 0.0
         # self._changes = []
 
@@ -516,7 +516,7 @@ class Vehicle:
     def toJson(self) -> Dict[str, Any]:
         return {
             # "class": Vehicle.__name__,
-            # "name": self.name,
+            # "_name": self._name,
             "current_change": self._current_charge,
             "target_charge": self._target_charge,
             # "original_target_charge": self._original_target_charge,

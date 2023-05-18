@@ -226,7 +226,7 @@ class V2GEnvironment(PyEnvironment):
                 threshold_energy = self._parking.get_next_min_discharge() - self._parking.get_next_min_charge()
                 available_energy = new_energy + threshold_energy
 
-                # print(f"Available energy: {available_energy}")
+                # print(f"Available energy: {available_energy}")hhh
                 max_non_emergency_charge = self._parking.get_next_max_charge() - self._parking.get_next_min_charge()
                 max_non_emergency_discharge = (
                         self._parking.get_next_max_discharge() - self._parking.get_next_min_discharge()
@@ -465,7 +465,7 @@ class V2GEnvironment(PyEnvironment):
         return self._power_market_env.get_reward_func_name()
 
     def toJson(self) -> Dict[str, Any]:
-        return {"name": self._mode, "parking": self._parking.toJson()}
+        return {"_name": self._mode, "parking": self._parking.toJson()}
 
     def __repr__(self) -> str:
         return json.dumps(self.toJson(), indent=4)

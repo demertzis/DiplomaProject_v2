@@ -196,7 +196,7 @@ class Parking:
         ### Raises:
             ParkingIsFull: The parking has no free spaces
         """
-        print('Tracing assign_vehicle')
+        #print('Tracing assign_vehicle')
         num_of_vehicles = self._num_of_vehicles.value()
         vehicles_added_number = tf.minimum(tf.shape(vehicles, tf.int64)[0], self._capacity - num_of_vehicles)
         new_vehicles = tf.gather(vehicles, tf.range(vehicles_added_number))
@@ -218,7 +218,7 @@ class Parking:
         """
         Filter out all vehicles that have left the parking
         """
-        print('Tracing depart_vehicles')
+        #print('Tracing depart_vehicles')
         num_of_vehicles = self._num_of_vehicles.value()
         vehicle_list = self._vehicles.value()[:num_of_vehicles]
         staying_vehicles = tf.less(0.0, vehicle_list[..., 2])
@@ -236,7 +236,7 @@ class Parking:
 
     @tf.function(input_signature=[tf.TensorSpec([None, 13], tf.float32), tf.TensorSpec([], tf.int64)])
     def _update_batch_vehicles(self, vehicles: tf.Tensor, vehicles_counted: tf.Tensor):
-        print('Tracing _update_batch_vehicles')
+        #print('Tracing _update_batch_vehicles')
         num_cars_added = tf.shape(vehicles, out_type=tf.int64)[0]
         num_of_cars = vehicles_counted - num_cars_added
         num_of_cars = tf.cast(num_of_cars, tf.float32)
@@ -257,7 +257,7 @@ class Parking:
 
     @tf.function
     def _update_parking_state(self):
-        print('Tracing update_parking_state')
+        #print('Tracing update_parking_state')
         num_of_vehicles = self._num_of_vehicles
         vehicles = self._vehicles.gather_nd(tf.expand_dims(tf.range(num_of_vehicles), axis=1))
         num_of_vehicles = tf.cast(num_of_vehicles, tf.float32)
@@ -276,7 +276,7 @@ class Parking:
 
     @tf.function
     def _calculate_normalization_constant(self):
-        print('Tracing _calculate_normalization_constant')
+        #print('Tracing _calculate_normalization_constant')
         num_of_vehicles = self._num_of_vehicles.value()
         vehicle_array = self._vehicles.value()[:num_of_vehicles]
         needed_fields_1 = tf.gather(vehicle_array, [9, 11], axis=1)
@@ -302,7 +302,7 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The ratio of the used charging/discharging capacity
         """
-        print('Tracing update_energy_state')
+        #print('Tracing update_energy_state')
         is_charging = tf.where(tf.less(0.0, charging_coefficient), 1.0, -1.0)
         num_of_vehicles = self._num_of_vehicles.value()
         vehicle_array = self._vehicles.value()[:num_of_vehicles]
@@ -324,7 +324,7 @@ class Parking:
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[None, 13], dtype=tf.float32)])
     def _sort_vehicles(self, vehicle_array):
-        print('Tracing _sort_vehicles')
+        #print('Tracing _sort_vehicles')
         departure_tensor = vehicle_array[..., 2]
         sorted_args = tf.argsort(departure_tensor)
         return tf.gather(vehicle_array, sorted_args)
@@ -336,7 +336,7 @@ class Parking:
                                          vehicle_array,
                                          charging_coefficient,
                                          normalization_constant):
-        print('Tracing _sort_vehicles_for_charge_update')
+        #print('Tracing _sort_vehicles_for_charge_update')
         tensor_1 = charging_coefficient * (1.0 + vehicle_array[..., 5] - normalization_constant)
         tensor_2 = charging_coefficient * (1.0 + vehicle_array[..., 6] - normalization_constant)
         tensor_mapping = tf.where(tf.less(0.0, charging_coefficient), tensor_1, tensor_2)
@@ -352,7 +352,7 @@ class Parking:
             charging_coefficient (``float``) :
                 description: The charging coefficient
         """
-        print('Tracing update (parking)')
+        #print('Tracing update (parking)')
         self.update_energy_state(charging_coefficient)
         self.depart_vehicles()
         self._update_parking_state()
@@ -360,7 +360,7 @@ class Parking:
     def toJson(self) -> Dict[str, Any]:
         return {
             "class": Parking.__name__,
-            "name": self.name,
+            "_name": self.name,
             "max_charging_rage": self._max_charging_rate,
             "max_discharging_rate": self._max_discharging_rate,
             "vehicles": list(map(lambda v: v.toJson(), self._vehicles)),

@@ -12,14 +12,14 @@ import app.policies.tf_reward_functions as rf
 
 from app.models.tf_energy import EnergyCurve
 from app.policies.multiple_tf_agents import MultipleAgents
-from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
+from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE, NUM_OF_ACTIONS
 
 from app.models.tf_pwr_env import TFPowerMarketEnv
 
 from app.utils import VehicleDistributionList, calculate_vehicle_avg_distribution_from_tensor, generate_vehicles
 from app.abstract.tf_single_agent_3 import create_single_agent
-# tf.config.run_functions_eagerly(True)
-tf.config.optimizer.set_jit("autoclustering")
+tf.config.run_functions_eagerly(True)
+# tf.config.optimizer.set_jit("autoclustering")
 # tf.debugging.set_log_device_placement(True)
 
 with open('data/vehicles.json') as file:
@@ -32,12 +32,12 @@ single_agent_time_step_spec = tensor_spec.from_spec(TimeStep(
     observation=array_spec.BoundedArraySpec(shape=(34,), dtype=np.float32, minimum=-1., maximum=1.),
 ))
 
+num_actions = NUM_OF_ACTIONS
 single_agent_action_spec = tensor_spec.from_spec(array_spec.BoundedArraySpec(
-            shape=(), dtype=np.int64, minimum=0, maximum=20, name="action"
+            shape=(), dtype=np.int64, minimum=0, maximum=num_actions-1, name="action"
         ))
 
 model_dir = 'pretrained_networks/model.keras'
-num_actions = 21
 
 # if not model_dir:
 layers_list = \
@@ -110,6 +110,7 @@ for i in range(NUMBER_OF_AGENTS):
                                           ckpt_dir=ckpt_dir,
                                           vehicle_distribution=list(vehicles),
                                           buffer_max_size=MAX_BUFFER_SIZE,
+                                          num_of_actions=num_actions,
                                           capacity_train_garage=100,
                                           capacity_eval_garage=200,
                                           name='Agent-' + str(i+1),
@@ -120,8 +121,9 @@ for i in range(NUMBER_OF_AGENTS):
 energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
 energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
-collect_avg_vehicles_list = calculate_vehicle_avg_distribution_from_tensor(100,
-                                                                           generate_vehicles(coefficient_function))
+# collect_avg_vehicles_list = calculate_vehicle_avg_distribution_from_tensor(100,
+#                                                                            generate_vehicles(coefficient_function))
+collect_avg_vehicles_list = tf.constant([10.0] * 24)
 
 train_env = TFPowerMarketEnv(energy_curve_train,
                              reward_function,

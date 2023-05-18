@@ -52,8 +52,8 @@ from app.utils import vehicle_arrival_generator
 #
 #         return preprocessed_sequence
 #
-#     def __getattr__(self, name):
-#         return getattr(self._agent, name)
+#     def __getattr__(self, _name):
+#         return getattr(self._agent, _name)
 
 
 
@@ -66,13 +66,13 @@ from app.utils import vehicle_arrival_generator
 #                  tf_agent: TFAgent,
 #                  vehicle_distribution: VehicleDistributionList,
 #                  capacity: int = 100,
-#                  name: str = "DefaultAgent",
+#                  _name: str = "DefaultAgent",
 #                  coefficient_function = None,
 #                  replay_buffer: ReplayBuffer = None,
 #                  ):
-#         self._name = name
-#         # self._agent_id = int(filter(str.isdigit, name)
-#         self._agent_id = int("".join(item for item in list(filter(str.isdigit, name))))
+#         self._name = _name
+#         # self._agent_id = int(filter(str.isdigit, _name)
+#         self._agent_id = int("".join(item for item in list(filter(str.isdigit, _name))))
 #
 #         self._agent = MyAgentWrapper(tf_agent, self._agent_id)
 #         self._agent.initialize()
@@ -113,7 +113,7 @@ from app.utils import vehicle_arrival_generator
 #         )
 #
 #     @property
-#     def name(self):
+#     def _name(self):
 #         return self._name
 #
 #     @property
@@ -304,7 +304,7 @@ def create_single_agent(cls: type,
             self._name = name
             self._agent_id = int("".join(item for item in list(filter(str.isdigit, name))))
             if not self._agent_id:
-                raise Exception('Agent name must have an integer'
+                raise Exception('Agent _name must have an integer'
                                 ' to denote the agents unique id.'
                                 'For example: Agent_1')
 

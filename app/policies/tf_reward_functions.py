@@ -3,16 +3,15 @@ from config import CRID_COEFFICIENT, AVG_CONSUMPTION
 
 
 def vanilla(prices: tf.Tensor, crid_price: tf.Tensor, tick: tf.Tensor, action: tf.Tensor, avg_consumption: tf.Tensor) -> tf.Tensor:
-	avg_consumption = tf.constant(AVG_CONSUMPTION(), dtype=tf.float32)
-	total_demand = tf.squeeze(tf.math.reduce_sum(action))
+	total_demand = tf.math.reduce_sum(action)
 	demand_overflow = total_demand - avg_consumption
 	sell_price_min = crid_price * CRID_COEFFICIENT
-	demand_total_price = tf.cond(tf.math.less_equal(total_demand, 0.0),
-								 lambda: total_demand * sell_price_min,
-								 lambda: (tf.math.minimum(total_demand , avg_consumption) *\
-									 prices[tick]) + \
-									 (tf.math.maximum(0.0, demand_overflow) * \
-										 crid_price)
-								)
-	unit_price = (demand_total_price / total_demand) if tf.math.abs(total_demand) > 0.0 else tf.constant(0.0)
-	return unit_price * action
+	total_sell = total_demand * sell_price_min
+	total_buy = tf.minimum(total_demand , avg_consumption) *\
+				prices[tick] + \
+				tf.maximum(0.0, demand_overflow) * \
+				crid_price
+	unit_price_2 = tf.where(tf.less(0.0, total_demand),
+							tf.math.divide_no_nan(total_buy, total_demand),
+							tf.math.divide_no_nan(total_sell, total_demand))
+	return unit_price_2 * action

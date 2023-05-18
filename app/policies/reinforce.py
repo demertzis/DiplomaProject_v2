@@ -227,7 +227,7 @@ class DQNPolicy(DDQNPolicy):
                 sys.stdout.write("\033[K")
                 sys.stdout.write(
                     f'[{"=" * percentage + " " * (70 - percentage)}] {self._name} self._loss: {train_loss} ')
-                sys.stdout.flush()  # TODO denote agent's name
+                sys.stdout.flush()  # TODO denote agent's _name
 
 
 

@@ -430,7 +430,7 @@ class Parking:
     def toJson(self) -> Dict[str, Any]:
         return {
             "class": Parking.__name__,
-            "name": self.name,
+            "_name": self.name,
             "max_charging_rage": self._max_charging_rate,
             "max_discharging_rate": self._max_discharging_rate,
             "vehicles": list(map(lambda v: v.toJson(), self._vehicles)),
