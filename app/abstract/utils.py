@@ -1,5 +1,6 @@
 import logging
 
+from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
 from tf_agents.environments.py_environment import PyEnvironment
 import tensorflow as tf
 from tf_agents.utils.common import Checkpointer
@@ -129,3 +130,8 @@ def compute_avg_return(environment: PyEnvironment, policy, num_episodes=10):
 #         model_kwargs.pop('step_type', None)
 #         model_kwargs.pop('network_state', None)
 #         return self.model(inputs, **model_kwargs), ()
+
+class MyDynamicEpisodeDriver(DynamicEpisodeDriver):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._run_fn = tf.function(jit_compile=True)(self._run)

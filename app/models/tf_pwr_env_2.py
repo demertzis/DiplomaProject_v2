@@ -7,7 +7,7 @@ from tf_agents.specs import tensor_spec
 from tf_agents.trajectories import time_step as ts
 from tf_agents.trajectories.time_step import TimeStep
 
-from app.models.tf_energy import EnergyCurve
+from app.models.tf_energy_2 import EnergyCurve
 from config import DISCOUNT
 
 class TFPowerMarketEnv(TFEnvironment, tf.Module):
@@ -21,7 +21,7 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
             step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int64, minimum=0, maximum=2),
             discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.float32, minimum=0.0, maximum=1.0),
             reward=tensor_spec.TensorSpec(shape=(number_of_agents,), dtype=tf.float32),
-            observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=tf.float16, minimum=-1., maximum=1.),
+            observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=tf.float32, minimum=-1., maximum=1.),
         ))
         action_spec = tensor_spec.from_spec(tensor_spec.TensorSpec(
             shape=(number_of_agents,), dtype=tf.float32, name="action"
@@ -37,7 +37,7 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
         self._mode = train_mode
         self._hard_reset_flag = tf.Variable(False, dtype=tf.bool, trainable=False)
         self._discount = tf.constant(DISCOUNT, dtype=tf.float32)
-        self._avg_consumption_tensor = tf.constant(avg_consumption_list)
+        self._avg_consumption_tensor = tf.constant(avg_consumption_list, tf.float32)
         self._time_of_day = tf.Variable(-1, dtype=tf.int64)
         self._day_ahead_prices = tf.Variable([0.0] * 24 + [-1.0] * 12, dtype=tf.float32, trainable=False)
         self._intra_day_prices = tf.Variable([0.0] * 24 + [-1.0], dtype=tf.float32, trainable=False)
@@ -50,8 +50,9 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
         #print('Tracing hard_reset')
         # self._hard_reset_flag.assign(True)
         self._hard_reset_flag.assign(True)
+        self._energy_curve.reset()
 
-    @tf.function
+    # @tf.function
     def _return_last_timestep(self):
         #print('Tracing _return_last_timestep')
         tensor = self._last_time_step
@@ -60,27 +61,24 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
         discount = tensor[1]
         # reward = tf.reshape(tensor[2:num_of_agents+2], self.time_step_spec().reward.shape)
         reward = tensor[2:num_of_agents+2]
-        observation = tf.cast(tensor[num_of_agents + 2:], tf.float16)
+        observation = tensor[num_of_agents+2:]
         # observation = tensor[num_of_agents + 2:]
         return TimeStep(tf.expand_dims(step_type, axis=0),
                         tf.expand_dims(reward, axis=0),
                         tf.expand_dims(discount, axis=0),
                         tf.expand_dims(observation, axis=0))
 
-    @tf.function
+    # @tf.function
     def _current_time_step(self):
         #print('Tracing _current_time_step')
         def a():
             rt = self._reset()
             self._last_time_step.assign(tf.concat((tf.cast(rt.step_type, tf.float32),
-                                                   # tf.cast(rt.discount, tf.float32),
                                                    rt.discount,
-                                                   # tf.reshape(rt.reward, [-1]),
-                                                   rt.reward[0],
-                                                   # tf.cast(tf.squeeze(rt.observation[0]), tf.float32)),
-                                                   tf.cast(rt.observation[0], tf.float32)),
+                                                   tf.reshape(rt.reward, [-1]),
+                                                   # rt.reward[0],
+                                                   tf.squeeze(rt.observation)),
                                                   axis=0))
-
             return rt
 
         time = tf.cast(self._time_of_day, tf.int32)
@@ -94,7 +92,7 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
 
 
 
-    @tf.function
+    # @tf.function
     def _min_max_normalizer(self, tensor: tf.Tensor):
         #print('Tracing _min_max_normalizer')
         # if tf.squeeze(tensor).shape.rank > 1:
@@ -111,91 +109,78 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
         # possible_constant =
         # return (tensor - minimum) / (maximum - minimum)
         return tf.where(tf.less(rt, 0.0), -1.0, rt)
-    @tf.function
-    def _get_obs(self):
-        #print('Tracing _get_obs')
-        time = self._time_of_day
-        da_prices = self._day_ahead_prices[time:time+12]
-        # id_price = tf.where(tf.less(time, 24), self._intra_day_prices[time:time+1], [0.0])
-        id_price = self._intra_day_prices[time:time+1]
+    # @tf.function
+    def _get_obs(self, time):
+        # print('Tracing _get_obs')
+        da_prices = self._day_ahead_prices.value()[time:time+12]
+        id_price = self._intra_day_prices.value()[time:time+1]
         scaled_tensor = self._min_max_normalizer(tf.concat((da_prices, id_price), axis=0))
-        # padding_length = 13 - tf.shape(scaled_tensor)[0]
-        # final_tensor = tf.pad(scaled_tensor, [[0, padding_length]], 'CONSTANT', -1.0)
-        # final_tensor = tf.ensure_shape(final_tensor, [13])
-        # return final_tensor
-        return scaled_tensor
-    @tf.function
+        return tf.ensure_shape(scaled_tensor, [13])
+        # return scaled_tensor
+    # @tf.function
     def _reset(self) -> ts.TimeStep:
-        #print('Tracing _reset')
-        index = tf.where(self._hard_reset_flag, 2, tf.clip_by_value(tf.cast(self._time_of_day, tf.int32) - 23,
-                                                                    0,
-                                                                    1))
-        self._hard_reset_flag.assign(False)
-        tf.switch_case(index,
-                       [tf.no_op,
-                        self._energy_curve.get_next_episode,
-                        self._energy_curve.reset])
+        # print('Tracing _reset')
+        # index = tf.where(self._hard_reset_flag, 2, tf.clip_by_value(tf.cast(self._time_of_day, tf.int32) - 23,
+        #                                                             0,
+        #                                                             1))
+        # self._hard_reset_flag.assign(False)
+        # tf.switch_case(index,
+        #                [tf.no_op,
+        #                 self._energy_curve.get_next_episode,
+        #                 self._energy_curve.reset])
         self._time_of_day.assign(0)
-        self._day_ahead_prices.assign(tf.concat((self._energy_curve.get_current_batch(),
-                                                tf.constant([-1.0] * 12)), 0))
-        self._intra_day_prices.assign(tf.concat((self._energy_curve.get_current_batch_intra_day(),
-                                                tf.constant([-1.0])), 0))
-        obs = self._get_obs()
+        self._energy_curve.get_next_episode()
+        da_prices = self._energy_curve.get_current_batch()
+        self._day_ahead_prices.assign(tf.concat((da_prices[:24],
+                                                 tf.constant([-1.0] * 12)), 0))
+        id_batch = self._energy_curve.get_current_batch_intra_day()
+        self._intra_day_prices.assign(tf.concat((id_batch[:24],
+                                                 tf.constant([-1.0])), 0))
+        obs = self._get_obs(0)
         rt = ts.restart(observation=tf.expand_dims(obs, 0),
                         batch_size=self.batch_size,
-                        reward_spec=self.reward_spec(),
-                       )
+                        reward_spec=self.reward_spec())
         self._last_time_step.assign(tf.concat((tf.cast(rt.step_type, tf.float32),
                                                rt.discount,
-                                               # tf.reshape(rt.reward, [-1]),
-                                               rt.reward[0],
-                                               # tf.squeeze(rt.observation)),
-                                               rt.observation[0]),
+                                               tf.reshape(rt.reward, [-1]),
+                                               # rt.reward[0],
+                                               tf.squeeze(rt.observation)),
                                               axis=0))
-        return rt._replace(step_type=tf.cast(rt.step_type, tf.int64),
-                           observation=tf.cast(rt.observation, tf.float16),)
+        return rt._replace(step_type=tf.cast(rt.step_type, tf.int64))
 
-    @tf.function
+    # @tf.function
     def _step(self, action: tf.Tensor):
-        #print('Tracing _step')
+        # print('Tracing _step')
         def reward_tensor():
+            reward_time = time  - 1
             return self._reward_function(self._day_ahead_prices,
-                                         self._intra_day_prices[self._time_of_day],
-                                         self._time_of_day,
+                                         self._intra_day_prices[reward_time],
+                                         reward_time,
                                          action,
                                          tf.gather(self._avg_consumption_tensor,
-                                                   self._time_of_day)) / (-10000.0)
+                                                   reward_time)) / (-10000.0)
         #TODO add some kind of monitoring of prices
-        obs = tf.expand_dims(self._get_obs(), 0)
         def a():
-            rt = ts.transition(observation=obs,
+            rt = ts.transition(observation=tf.expand_dims(self._get_obs(time), 0),
                                reward=reward_tensor(),
                                discount=self._discount,
                                outer_dims=[self.batch_size])
-            return rt._replace(step_type=tf.cast(rt.step_type, tf.int64),
-                               observation=tf.cast(rt.observation, tf.float16),)
-                               # discount=tf.cast(rt.discount, tf.float16))
+            return rt._replace(step_type=tf.cast(rt.step_type, tf.int64))
         def b():
-            rt = ts.termination(observation=obs,
+            rt = ts.termination(observation=tf.expand_dims(self._get_obs(time), 0),
                                 reward=reward_tensor(),
                                 outer_dims=[self.batch_size])
-            return rt._replace(step_type=tf.cast(rt.step_type, tf.int64),
-                               observation=tf.cast(rt.observation, tf.float16))
-                               # discount=tf.cast(rt.discount, tf.float16))
-        time = tf.cast(self._time_of_day, tf.int32)
-        index = tf.where(tf.math.logical_or(tf.math.equal(24, time),
-                                            tf.math.equal(-1, time)),
-                         0,
-                         tf.clip_by_value(time - 21, 1, 2)) #Trick to get 1 if time < 23, and 2 if time == 23
+            return rt._replace(step_type=tf.cast(rt.step_type, tf.int64))
         self._time_of_day.assign_add(1)
+        time = tf.cast(self._time_of_day.value(), tf.int32)
+        index = tf.where(tf.math.logical_or(tf.math.equal(25, time),
+                                            tf.math.equal(0, time)),
+                         0,
+                         tf.clip_by_value(time - 22, 1, 2)) #Trick to get 1 if time < 23, and 2 if time == 23
         rt = tf.switch_case(index, [self._reset, a, b])
         self._last_time_step.assign(tf.concat((tf.cast(rt.step_type, tf.float32),
-                                               # tf.cast(rt.discount, tf.float32),
                                                rt.discount,
-                                               # tf.reshape(rt.reward, [-1]),
-                                               rt.reward[0],
-                                               tf.cast(tf.squeeze(rt.observation), tf.float32)),
+                                               tf.reshape(rt.reward, [-1]),
+                                               tf.squeeze(rt.observation)),
                                               axis=0))
-        return rt._replace(observation=tf.cast(rt.observation, tf.float16),)
-        # return rt
-                           # discount=tf.cast(rt.discount, tf.float16))
+        return rt

@@ -13,6 +13,7 @@ from tf_agents.agents import TFAgent, data_converter
 from tf_agents.utils import nest_utils, common
 from tf_agents.utils.common import Checkpointer
 
+import config
 from app.models.tf_utils import my_round, my_round_16
 from app.models.tf_parking_7 import Parking
 from app.utils import generate_vehicles, generate_vehicles_constant_shape
@@ -168,7 +169,7 @@ def create_single_agent(cls: type,
         #     else:
         #         self._eval_parking.assign_vehicles(vehicles)
 
-        @tf.function
+        # @tf.function
         def _add_new_cars(self, train_mode=True): # TODO decide on way to choose between distributions
             #print('Tracing add_new_cars')
             if train_mode:
@@ -202,7 +203,7 @@ def create_single_agent(cls: type,
             with the saved garage state (or not if it's called during training)
             """
 
-            @tf.function
+            # @tf.function
             def wrapped_action_eval(time_step: TimeStep,
                                     policy_state: types.NestedTensor = (),
                                     seed: Optional[types.Seed] = None,) -> PolicyStep:
@@ -223,10 +224,9 @@ def create_single_agent(cls: type,
                     # if ~time_step.is_last():
                     #     self._add_new_cars(False)
                     #     self._eval_steps.assign_add(1)
-                    # self._eval_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
-                    #                                      tf.constant(0, tf.int64),
-                    #                                      tf.constant(1, tf.int64)))
-                    self._eval_steps.assign_add(1)
+                    self._eval_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
+                                                         tf.constant(0, tf.int64),
+                                                         tf.constant(1, tf.int64)))
                     self._add_new_cars(False)
                     # index = tf.where(tf.squeeze(time_step.is_last()), 0, 1)
                     # self._eval_steps.assign_add(tf.cast(index, tf.int64))
@@ -253,7 +253,7 @@ def create_single_agent(cls: type,
                     return step.replace(action=load)
 
 
-            @tf.function
+            # @tf.function
             def wrapped_action_collect(time_step: TimeStep,
                                policy_state: types.NestedTensor = (),
                                seed: Optional[types.Seed] = None,) -> PolicyStep:
@@ -263,10 +263,9 @@ def create_single_agent(cls: type,
                 #     self._time_of_day.assign_add(1)
                 # else:
                 #     self._time_of_day.assign(0)
-                # self._collect_steps.assign(tf.where(tf.squeeze(time_step.is_last()),
-                #                                     tf.constant(0, tf.int64),
-                #                                     tf.constant(1, tf.int64)))
-                self._collect_steps.assign_add(1)
+                self._collect_steps.assign(tf.where(tf.squeeze(time_step.is_last()),
+                                                    tf.constant(0, tf.int64),
+                                                    tf.constant(1, tf.int64)))
                 self._add_new_cars(True)
                 parking_obs = self._get_parking_observation(True)
                 augmented_obs = tf.concat((time_step.observation,
@@ -295,8 +294,8 @@ def create_single_agent(cls: type,
 
             return wrapped_action_collect if collect else wrapped_action_eval
 
-        @tf.function
-        # @tf.function(jit_compile=True)
+        # @tf.function
+        # @tf.function(jit_compile=config.USE_JIT)
         def _preprocess_sequence(self, experience: trajectory.Trajectory):
             """
             Trajectories from the buffer contain just the market environment data
@@ -305,7 +304,7 @@ def create_single_agent(cls: type,
             removes the policy info (which is used to fetch the parking state from
             the agents field _private_observations)
             """
-            #print('Tracing preprocess_sequence')
+            # print('Tracing preprocess_sequence')
             # parking_obs = self._private_observations.gather_nd(experience.policy_info)
             parking_obs = tf.gather(self._private_observations, tf.squeeze(experience.policy_info))
             # actions = self._private_actions.gather_nd(experience.policy_info)
@@ -322,7 +321,7 @@ def create_single_agent(cls: type,
                                       reward=agent_reward,
                                       action=actions, )
 
-        @tf.function
+        # @tf.function
         def _calculate_vehicle_distribution(self, train: bool):
             #print('Tracing calculate_vehicle_distribution')
             if train:
@@ -343,7 +342,8 @@ def create_single_agent(cls: type,
             departure_distribution_tensor = tf.math.cumsum(departure_count_tensor,
                                                            reverse=True)
             return departure_distribution_tensor / capacity
-        @tf.function
+
+        # @tf.function
         def _get_parking_observation(self, train: bool):
             #print('Tracing get_parking_observation')
             if train:
@@ -408,7 +408,7 @@ def create_single_agent(cls: type,
                                            axis=0),
                                   axis=0)
 
-        @tf.function(jit_compile=True)
+        # @tf.function(jit_compile=True)
         def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, collect_mode = True):
             #print('Tracing get_load')
             parking = self._train_parking.return_fields() if collect_mode else self._eval_parking.return_fields()
@@ -433,7 +433,7 @@ def create_single_agent(cls: type,
                                  threshold_coefficient)
             return new_energy
 
-        @tf.function
+        # @tf.function
         def _update_parking(self,
                             train,
                             new_energy,
@@ -461,8 +461,8 @@ def create_single_agent(cls: type,
             else:
                 self._eval_parking.update(update_coefficient)
 
-        def wrap_external_policy_action(self, action):
-            return self._action_wrapper(action, False)
+        def wrap_external_policy_action(self, action, collect: bool):
+            return self._action_wrapper(action, collect)
 
     return SingleAgent(list(vehicle_distribution),
                        coefficient_function,

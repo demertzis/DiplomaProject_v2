@@ -4,12 +4,14 @@ import tensorflow as tf
 from tf_agents.agents import TFAgent, data_converter
 from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
 from tf_agents.drivers.dynamic_step_driver import DynamicStepDriver
+from tf_agents.drivers.tf_driver import TFDriver
 from tf_agents.metrics import tf_metrics
 from tf_agents.policies.tf_policy import TFPolicy
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.specs import tensor_spec
 
 import config
+from app.abstract.utils import MyDynamicEpisodeDriver
 from config import MAX_BUFFER_SIZE
 from tf_agents.trajectories import time_step as ts, TimeStep
 
@@ -19,7 +21,7 @@ from tf_agents.utils import common
 
 import time
 
-from app.models.tf_pwr_env import TFPowerMarketEnv
+from app.models.tf_pwr_env_2 import TFPowerMarketEnv
 
 # class MultiAgentPolicyWrapper(TFPolicy):
 #     def __init__(self,
@@ -140,6 +142,7 @@ class MultiAgentPolicyWrapper(TFPolicy):
                                                  trainable=False)
         self._agent_id_tensor = tf.range(self._num_of_agents,
                                          dtype=tf.int32) #has to be int32 because of switch_case
+        self.action = tf.function(self.action, jit_compile=True if config.USE_JIT else False)
     @property
     def global_step(self):
         return self._global_step.value()
@@ -147,7 +150,7 @@ class MultiAgentPolicyWrapper(TFPolicy):
     def wrapped_policy_list(self) -> List[TFPolicy]:
         return self._policy_list
 
-    @tf.function
+    # @tf.function(jit_compile=True)
     def _action(self, time_step: ts.TimeStep,
                       policy_state: types.NestedTensor,
                       seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
@@ -191,7 +194,8 @@ class MultipleAgents(tf.Module):
     def __init__(self, train_env: TFPowerMarketEnv,
                  eval_env: TFPowerMarketEnv,
                  agents_list: List[TFAgent],
-                 ckpt_dir = "new_checkpoints"):
+                 ckpt_dir = "new_checkpoints",
+                 initial_collect_policy: Optional = None):
         self.train_env = train_env
         self.eval_env = eval_env
 
@@ -232,15 +236,19 @@ class MultipleAgents(tf.Module):
                                                (),
                                                self.global_step.value(),
                                                False)
+        self._intial_policy = self._wrap_policy(initial_collect_policy, True) if initial_collect_policy else None
+
         steps = self.num_eval_episodes * 24
         self._metric = tf_metrics.AverageReturnMetric(batch_size=self.eval_env.batch_size,
                                                       buffer_size=steps)
-        self._eval_driver = DynamicEpisodeDriver(self.eval_env,
-                                                 self.policy,
-                                                 [self._metric],
-                                                 num_episodes=self.num_eval_episodes)
+        self._eval_driver = TFDriver(self.eval_env,
+                                     self.policy,
+                                     [self._metric],
+                                     max_episodes=self.num_eval_episodes,
+                                     disable_tf_function=False)
+        # self._eval_driver.run = tf.function(self._eval_driver.run, jit_compile=True)
         for agent in self._agent_list:
-            agent.train = tf.function(jit_compile=True)(agent.train)
+            agent.train = tf.function(jit_compile=config.USE_JIT)(agent.train)
             agent.private_index = self.global_step
 
 
@@ -265,24 +273,27 @@ class MultipleAgents(tf.Module):
 
     def train(self):
         # tf.config.run_functions_eagerly(True)
-        best_avg_return = self.eval_policy()
-        print(best_avg_return)
+        # best_avg_return = self.eval_policy()
+        # print(best_avg_return)
         dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3,
             sample_batch_size=self.batch_size,
             num_steps=2).prefetch(10)
         iterator = iter(dataset)
-        # tf.config.run_functions_eagerly(True)
         if self.replay_buffer.num_frames() < self.initial_collect_steps:
-            DynamicStepDriver(self.train_env,
-                              self.collect_policy,
-                              [lambda traj: self.replay_buffer.add_batch(traj.replace(action=()))],
-                              num_steps=self.initial_collect_steps).run()
+            self.train_env.hard_reset()
+            TFDriver(self.train_env,
+                     self._intial_policy or self.collect_policy,
+                     [lambda traj: self.replay_buffer.add_batch(traj.replace(action=()))],
+                     max_steps=self.initial_collect_steps,
+                     disable_tf_function=False).run(self.train_env.reset())
+            # initial_driver.run = tf.function(initial_driver, jit_compile=True)
 
         # train_list = [lambda exp: agent.train(exp) for agent in self._agent_list]
-        @tf.function()
+        # @tf.function
         def _train_step():
-            experience, _ = next(iterator)
+            # experience, _ = next(iterator)
+            experience, _ = self.replay_buffer.get_next(sample_batch_size=self.batch_size, num_steps=2)
             train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
             train_loss = tf.map_fn(lambda id: tf.switch_case(id,
                                                              train_list),
@@ -292,28 +303,38 @@ class MultipleAgents(tf.Module):
             # train_loss = tf.vectorized_map(lambda id: tf.switch_case(id,
             #                                                          train_list),
             #                                tf.range(self._number_of_agents, dtype=tf.int32))
-            # if tf.reduce_any(tf.math.is_nan(train_loss)):
-            #     tf.print('Train_loss is nan at step: ', self._agent_list[0].train_step_counter)
             self._total_loss.assign_add(train_loss / tf.cast(24 * self.epochs, tf.float32))
-            # return train_loss
 
         # collect_driver = DynamicStepDriver(self.train_env,
         #                                    self.collect_policy,
         #                                    [lambda traj: self.replay_buffer.add_batch(traj.replace(action=())),
         #                                     lambda traj: _train_step()],
         #                                    num_steps=self.collect_steps_per_iteration)
-        collect_driver = DynamicEpisodeDriver(self.train_env,
-                                              self.collect_policy,
-                                              [lambda traj: self.replay_buffer.add_batch(traj.replace(action=())),
-                                               lambda traj: _train_step()],
-                                              num_episodes=self.epochs)
+        collect_driver = TFDriver(self.train_env,
+                                  self.collect_policy,
+                                  [lambda traj: self.replay_buffer.add_batch(traj.replace(action=())),
+                                   lambda traj: _train_step()],
+                                  max_episodes=self.epochs,
+                                  disable_tf_function=False)
+        @tf.function
+        def train_epoch():
+            self.train_env.hard_reset()
+            collect_driver.run(self.train_env.reset())
+            return self.eval_policy()
+
+        # collect_driver.run = tf.function(collect_driver.run, jit_compile=True)
         time_step = self.train_env.reset()
         epoch_st = time.time()
         # epoch_train_st = 0.0
         loss_acc = [0.0] * self._number_of_agents
 
         for i in range(1, self.num_iterations+1):
-            time_step, __ = collect_driver.run(time_step)
+            # time_step, __ = collect_driver.run(time_step)
+
+            # self.train_env.hard_reset()
+            # collect_driver.run(self.train_env.reset())
+            avg_return = train_epoch()
+
             # print('collect_time: ', time.time() - st)
             # experience, ___ = next(iterator)
             # tst = time.time()
@@ -328,7 +349,7 @@ class MultipleAgents(tf.Module):
             #     # print('step = ', step, '     loss', train_loss)
             #     print('step = ', step.numpy(), '     loss = ', average_loss)
             #     loss_acc = [0.0] * self._number_of_agents
-            avg_return = self.eval_policy()
+            # avg_return = self.eval_policy()
             print('Epoch: ', i, '            Avg_return = ', avg_return)
             print('Avg Train Loss: ', self._total_loss.value().numpy())
             epoch_et = time.time()
@@ -336,6 +357,13 @@ class MultipleAgents(tf.Module):
             print('Epoch duration: ', epoch_et - epoch_st)
             epoch_st = epoch_et
             self.returns.append(avg_return)
+
+            if i % 100 == 0:
+                self.global_step.assign(self.collect_policy.global_step)
+                self.checkpoint.save(self.global_step)
+                for agent in self._agent_list:
+                    agent.checkpoint_save(self.global_step)
+
 
             # if avg_return > best_avg_return:
             #     self.global_step.assign(self.collect_policy.global_step)
@@ -383,6 +411,25 @@ class MultipleAgents(tf.Module):
     def train_single_agent(self, experience, index: int):
         return self._agent_list[index].train(experience).loss
 
+    def _wrap_policy(self, policy_list, collect: bool):
+        if not isinstance(policy_list, list):
+            policy_list = [policy_list] * self._number_of_agents
+        elif len(policy_list) == 1:
+            policy_list = policy_list * self._number_of_agents
+        elif len(policy_list) != self._number_of_agents:
+            raise Exception('Policies List given should either be a single policy that will be projected to all'
+                            'agents or a list with length equal to the number of agents')
+        for i, policy in enumerate(policy_list):
+            policy.action = self._agent_list[i].wrap_external_policy_action(policy.action, collect)
+        env = self.train_env if collect else self.eval_env
+        return MultiAgentPolicyWrapper(policy_list,
+                                       env.time_step_spec(),
+                                       env.action_spec(),
+                                       (),
+                                       tensor_spec.TensorSpec((1,), tf.int64),
+                                       self.global_step.value(),
+                                       collect)
+
     # @tf.function
     def eval_policy(self, policy_list: Optional[List] = None):
         #print('Tracing eval_policy')
@@ -394,26 +441,13 @@ class MultipleAgents(tf.Module):
             self._eval_driver.run(self.eval_env.reset())
             return self._metric.result()
         else:
-            if len(policy_list) == 1:
-                policy_list = policy_list * self._number_of_agents
-            elif len(policy_list) != self._number_of_agents:
-                raise Exception('Policies List given should either be a single policy that will be projected to all'
-                                'agents or a list with length equal to the number of agents')
-            # policy_list = [agent.wrap_external_policy_action(policy_list[i].action) \
-            #                for i, agent in enumerate(self._agent_list)]
-            for i, policy in enumerate(policy_list):
-                policy.action = self._agent_list[i].wrap_external_policy_action(policy.action)
-            policy = MultiAgentPolicyWrapper(policy_list,
-                                             self.eval_env.time_step_spec(),
-                                             self.eval_env.action_spec(),
-                                             (),
-                                             (),
-                                             self.global_step.value(),
-                                             False)
-            driver = DynamicEpisodeDriver(self.eval_env,
-                                          policy,
-                                          [self._metric],
-                                          num_episodes=self.num_eval_episodes)
+            policy = self._wrap_policy(policy_list, False)
+            driver = TFDriver(self.eval_env,
+                              policy,
+                              [self._metric],
+                              max_episodes=self.num_eval_episodes,
+                              disable_tf_function=False)
+            # driver.run = tf.function(driver.run, jit_compile=True)
             driver.run(self.eval_env.reset())
             return self._metric.result()
 

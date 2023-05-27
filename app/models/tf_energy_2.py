@@ -45,7 +45,7 @@ class EnergyCurve(tf.Module):
         self._y = tf.Variable([[x,y] for z, x, y in self._data], trainable=False)
         self._normalizing_coefficient = tf.convert_to_tensor(self._normalizing_coefficient)
         self.randomize_data(self._name == 'eval')
-        self._start = tf.Variable(0, dtype=tf.int64, trainable=False)
+        self._start = tf.Variable(-24, dtype=tf.int64, trainable=False)
 
     def total_episodes(self):
         return len(self._data) // 24
@@ -166,13 +166,12 @@ class EnergyCurve(tf.Module):
         #print('Tracing get_next_episode')
         new_start = (self._start + 24) % len(self._data)
         self._start.assign(new_start)
-        tf.switch_case(tf.cast(new_start, tf.int32), [self.reset], default=tf.no_op, name='next_episode_switch')
 
-    # @tf.function
+    @tf.function
     def reset(self):
         #print('Tracing reset')
         self.randomize_data(self._name == 'eval')
-        self._start.assign(0)
+        self._start.assign(-24)
 
     def get_current_cost(self):
         """

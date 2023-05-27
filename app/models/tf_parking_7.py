@@ -355,8 +355,10 @@ class Parking:
         vehicle_array = Vehicle.update_emergency_demand(vehicles)
         self._next_max_charge.assign_sub(self._next_min_charge)
         self._next_max_discharge.assign_sub(self._next_min_discharge)
-        norm_constants = tf.reduce_sum(vehicle_array[..., 9:12:2] * vehicle_array[..., 5:7], axis=0) / \
-                         tf.stack((self._next_max_charge, self._next_max_discharge), axis=0)
+        norm_constants = tf.math.divide_no_nan(tf.reduce_sum(vehicle_array[..., 9:12:2] * vehicle_array[..., 5:7],
+                                                             axis=0),
+                                               tf.stack((self._next_max_charge, self._next_max_discharge),
+                                                        axis=0))
         normalization_constant = tf.where(tf.less(0.0, is_charging), norm_constants[0], norm_constants[1])
         # sorted_vehicles = self._sort_vehicles_for_charge_update(
         #     vehicle_array,
@@ -420,7 +422,7 @@ class Parking:
     #     return_matrix = tf.matmul(tf.sparse.to_dense(permutation_sparse_matrix), vehicle_array, a_is_sparse=True)
     #     return return_matrix
 
-    @tf.function
+    # @tf.function
     def update(self, charging_coefficient):
         """
         Given the action input, it performs an update step

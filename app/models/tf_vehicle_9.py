@@ -8,7 +8,7 @@ import tensorflow_probability as tfp
 # from app.models.tf_utils import my_round_16
 
 
-@tf.function(jit_compile=True)
+# @tf.function(jit_compile=True)
 def park(vehicles: tf.Tensor, max_charging_rate, max_discharging_rate, num_of_vehicles: int):
     """
     Park vehicle to parking space and initialize its state variables

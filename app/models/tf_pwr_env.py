@@ -50,7 +50,7 @@ class TFPowerMarketEnv(TFEnvironment):
         # self._hard_reset_flag.assign(True)
         self._hard_reset_flag.assign(True)
 
-    @tf.function
+    # @tf.function
     def _return_last_timestep(self):
         #print('Tracing _return_last_timestep')
         tensor = self._last_time_step
@@ -64,7 +64,7 @@ class TFPowerMarketEnv(TFEnvironment):
                         tf.expand_dims(discount, axis=0),
                         tf.expand_dims(observation, axis=0))
 
-    @tf.function
+    # @tf.function
     def _current_time_step(self):
         #print('Tracing _current_time_step')
         def a():
@@ -87,7 +87,7 @@ class TFPowerMarketEnv(TFEnvironment):
 
 
 
-    @tf.function
+    # @tf.function
     def _min_max_normalizer(self, tensor: tf.Tensor):
         #print('Tracing _min_max_normalizer')
         # if tf.squeeze(tensor).shape.rank > 1:
@@ -103,7 +103,7 @@ class TFPowerMarketEnv(TFEnvironment):
         # possible_constant =
         # return (tensor - minimum) / (maximum - minimum)
         return rt
-    @tf.function
+    # @tf.function
     def _get_obs(self):
         #print('Tracing _get_obs')
         time = self._time_of_day
@@ -115,9 +115,9 @@ class TFPowerMarketEnv(TFEnvironment):
         final_tensor = tf.ensure_shape(final_tensor, [13])
         return final_tensor
 
-    @tf.function
+    # @tf.function
     def _reset(self) -> ts.TimeStep:
-        #print('Tracing _reset')
+        print('Tracing _reset')
         index = tf.where(self._hard_reset_flag, 2, tf.clip_by_value(tf.cast(self._time_of_day, tf.int32) - 23,
                                                                     0,
                                                                     1))
@@ -141,9 +141,10 @@ class TFPowerMarketEnv(TFEnvironment):
                                               axis=0))
         return rt._replace(step_type=tf.cast(rt.step_type, tf.int64))
 
-    @tf.function
+
+    # @tf.function(jit_compile=True)
     def _step(self, action: tf.Tensor):
-        #print('Tracing _step')
+        print('Tracing _step')
         def reward_tensor():
             time = self._time_of_day - 1
             return self._reward_function(self._day_ahead_prices,
@@ -167,11 +168,11 @@ class TFPowerMarketEnv(TFEnvironment):
                                 outer_dims=[self.batch_size])
             return rt._replace(step_type=tf.cast(rt.step_type, tf.int64))
         time = tf.cast(self._time_of_day, tf.int32)
-        index = tf.where(tf.math.logical_or(tf.math.equal(24, time),
+        index = tf.where(tf.math.logical_or(tf.math.equal(25, time),
                                             # tf.math.equal(-1, time)),
                                             tf.math.equal(0, time)),
                          0,
-                         tf.clip_by_value(time - 21, 1, 2)) #Trick to get 1 if time < 23, and 2 if time == 23
+                         tf.clip_by_value(time - 22, 1, 2)) #Trick to get 1 if time < 23, and 2 if time == 23
         rt = tf.switch_case(index, [self._reset, a, b])
         self._last_time_step.assign(tf.concat((tf.cast(rt.step_type, tf.float32),
                                                rt.discount,
