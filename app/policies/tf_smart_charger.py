@@ -1,7 +1,10 @@
 import math
+from typing import Optional
+
 import tensorflow as tf
 from tf_agents.trajectories.time_step import TimeStep
 from tf_agents.trajectories.policy_step import PolicyStep
+from tf_agents.typing import types
 from tf_agents.utils import nest_utils
 
 
@@ -23,7 +26,7 @@ class SmartCharger:
     def threshold(self, value):
         self._threshold.assign(tf.constant(value, tf.float32))
 
-    def action(self, timestep: TimeStep, policy_state, seed) -> PolicyStep:
+    def action(self, timestep: TimeStep, policy_state, seed: Optional[types.Seed] = None) -> PolicyStep:
         nest_utils.assert_matching_dtypes_and_inner_shapes(
             timestep.observation,
             self.input_tensor_spec,

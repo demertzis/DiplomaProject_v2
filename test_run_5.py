@@ -21,6 +21,8 @@ from app.models.tf_pwr_env_2 import TFPowerMarketEnv
 
 from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
 from app.abstract.tf_single_agent_5 import create_single_agent
+from data_creation_2 import create_train_data
+
 # tf.debugging.set_log_device_placement(True)
 # tf.config.run_functions_eagerly(True)
 # tf.debugging.experimental.enable_dumpa_debug_info(
@@ -44,34 +46,35 @@ num_actions = 16
 single_agent_action_spec = tensor_spec.BoundedTensorSpec(
             shape=(), dtype=tf.int64, minimum=0, maximum=num_actions-1, name="action")
 
-model_dir = 'pretrained_networks/model.keras'
+model_dir = 'pretrained_networks/model_output_16.keras'
+#
+# layers_list = \
+#     [
+#         # tf.keras.layers.Dense(units=34, activation="elu"),
+#         tf.keras.layers.Dense(units=64, activation="elu"),
+#         tf.keras.layers.Dense(units=128, activation="elu"),
+#         # tf.keras.layers.BatchNormalization(),
+#         tf.keras.layers.Dense(
+#             num_actions,
+#         ),
+#         tf.keras.layers.Activation('linear', dtype=tf.float32)
+#     ]
 
-layers_list = \
-    [
-        # tf.keras.layers.Dense(units=34, activation="elu"),
-        tf.keras.layers.Dense(units=128, activation="elu"),
-        # tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Dense(
-            num_actions,
-        ),
-        tf.keras.layers.Activation('linear', dtype=tf.float32)
-    ]
 
-# else:
-#     keras_model = tf.keras.models.load_model(model_dir)
-#     layers_list = []
-#     i = 0
-#     while True:
-#         try:
-#             layers_list.append(keras_model.get_layer(index=i))
-#         except IndexError:
-#             print('{0}: Total number of layers in neural network: {1}'.format('Agent-1', i))
-#             break
-#         except ValueError:
-#             print('{0}: Total number of layers in neural network: {1}'.format('Agent-1', i))
-#             break
-#         else:
-#             i += 1
+keras_model = tf.keras.models.load_model(model_dir)
+layers_list = []
+i = 0
+while True:
+    try:
+        layers_list.append(keras_model.get_layer(index=i))
+    except IndexError:
+        print('{0}: Total number of layers in neural network: {1}'.format('Agent-1', i))
+        break
+    except ValueError:
+        print('{0}: Total number of layers in neural network: {1}'.format('Agent-1', i))
+        break
+    else:
+        i += 1
 
 temp_model = tf.keras.Sequential(layers_list)
 temp_model.build(input_shape=(1,34))
@@ -105,10 +108,10 @@ kwargs = {
     # 'optimizer': tf.keras.mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(learning_rate=learning_rate,
     #                                                                                   amsgrad=True),),
     'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
-    'td_errors_loss_fn': common.element_wise_squared_loss,
+    # 'td_errors_loss_fn': common.element_wise_squared_loss,
     # 'epsilon_greedy': epsilon_greedy,
     'epsilon_greedy': None,
-    'boltzmann_temperature': 1.0,
+    'boltzmann_temperature': 0.2,
     'target_update_tau': 0.001,
     'target_update_period': 1,
 }
@@ -171,7 +174,12 @@ variable_list = list(itertools.chain.from_iterable([module.variables if isinstan
                                                                                               in multi_agent.submodules]))
 for var in variable_list:
     print(var.device, var.name)
+input("Press Enter to continue...")
 
+# data = create_train_data(agent_list[0],
+#                          multi_agent.wrap_policy(SmartCharger(0.5, num_actions, single_agent_time_step_spec), True),
+#                          train_env,
+#                          5)
 st = time()
 # strategy = tf.distribute.get_strategy()
 # with strategy.scope():

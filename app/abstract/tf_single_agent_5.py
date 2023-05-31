@@ -255,17 +255,17 @@ def create_single_agent(cls: type,
 
             # @tf.function
             def wrapped_action_collect(time_step: TimeStep,
-                               policy_state: types.NestedTensor = (),
-                               seed: Optional[types.Seed] = None,) -> PolicyStep:
+                                       policy_state: types.NestedTensor = (),
+                                       seed: Optional[types.Seed] = None,) -> PolicyStep:
                 #print('Tracing wrapped_action_collect')
                 # if ~time_step.is_last():
                 #     self._add_new_cars(True)
                 #     self._time_of_day.assign_add(1)
                 # else:
                 #     self._time_of_day.assign(0)
-                self._collect_steps.assign(tf.where(tf.squeeze(time_step.is_last()),
-                                                    tf.constant(0, tf.int64),
-                                                    tf.constant(1, tf.int64)))
+                self._collect_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
+                                               tf.constant(0, tf.int64),
+                                               tf.constant(1, tf.int64)))
                 self._add_new_cars(True)
                 parking_obs = self._get_parking_observation(True)
                 augmented_obs = tf.concat((time_step.observation,
@@ -279,10 +279,13 @@ def create_single_agent(cls: type,
                               policy_state,
                               seed,)
                 time_step_batch_size = tf.shape(time_step.observation, out_type=tf.int64)[0]
-                indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
-                                             self._private_index) %
-                                             self._buffer_max_size,
-                                            [-1, 1])
+                # indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
+                #                              self._private_index) %
+                #                              self._buffer_max_size,
+                #                             [-1, 1])
+                indices_tensor = tf.expand_dims((tf.range(time_step_batch_size) + \
+                                                 self._private_index) % self._buffer_max_size,
+                                                axis=1)
                 self._private_index.assign_add(time_step_batch_size)
                 self._private_observations.scatter_nd_update(indices_tensor, parking_obs)
                 self._private_actions.scatter_nd_update(indices_tensor, step.action)
