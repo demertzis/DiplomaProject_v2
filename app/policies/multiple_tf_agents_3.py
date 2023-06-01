@@ -184,9 +184,8 @@ class MultipleAgents(tf.Module):
 
 
     def train(self):
-        # tf.config.run_functions_eagerly(True)
-        # best_avg_return = self.eval_policy()
-        # print(best_avg_return)
+        best_avg_return = self.eval_policy()
+        print(best_avg_return)
         dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3,
             sample_batch_size=self.batch_size,
