@@ -88,7 +88,7 @@ class MultiAgentPolicyWrapper(TFPolicy):
 class MultipleAgents(tf.Module):
     # num_iterations = 24 * 100 * 100
     num_iterations = config.TRAIN_ITERATIONS
-    num_eval_episodes = 10  # @param {type:"integer"}
+    num_eval_episodes = 20  # @param {type:"integer"}
     # num_eval_episodes = 1  # @param {type:"integer"}
     eval_interval = 24 * 100  # @param {type:"integer"} # 100 days in dataset
     # episode_eval_interval = 10

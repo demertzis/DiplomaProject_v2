@@ -120,7 +120,7 @@ def create_single_agent(cls: type,
                     step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.int64, minimum=0, maximum=2),
                     discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.float32, minimum=0.0, maximum=1.0),
                     reward=tensor_spec.TensorSpec(shape=(num_of_agents,), dtype=np.float32),
-                    observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=np.float16, minimum=-1., maximum=1.),
+                    observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=np.float32, minimum=-1., maximum=1.),
                 )
             buffer_info_spec = tensor_spec.TensorSpec(shape=(1,),
                                                       dtype=tf.int64)

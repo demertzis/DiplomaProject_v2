@@ -11,13 +11,13 @@ from tf_agents.utils import common
 from tf_agents.networks import sequential
 import app.policies.tf_reward_functions as rf
 
-from app.models.tf_energy_2 import EnergyCurve
+from app.models.tf_energy_3 import EnergyCurve
 from app.policies.multiple_tf_agents_3 import MultipleAgents
 from app.policies.tf_dummy_v2g import DummyV2G
 from app.policies.tf_smart_charger import SmartCharger
 from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
 
-from app.models.tf_pwr_env_2 import TFPowerMarketEnv
+from app.models.tf_pwr_env_3 import TFPowerMarketEnv
 
 from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
 from app.abstract.tf_single_agent_5 import create_single_agent
@@ -42,12 +42,12 @@ single_agent_time_step_spec = TimeStep(
     reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
     observation=tensor_spec.BoundedTensorSpec(shape=(34,), dtype=tf.float32, minimum=-1., maximum=1.))
 
-num_actions = 16
+num_actions = 8
 single_agent_action_spec = tensor_spec.BoundedTensorSpec(
             shape=(), dtype=tf.int64, minimum=0, maximum=num_actions-1, name="action")
 
-model_dir = 'pretrained_networks/model_output_16.keras'
-#
+model_dir = 'pretrained_networks/model_output_8_dropout.keras'
+
 # layers_list = \
 #     [
 #         # tf.keras.layers.Dense(units=34, activation="elu"),
@@ -86,7 +86,7 @@ target_q_net = sequential.Sequential(temp_target_model.layers, name='TargetQNetw
 # temp = q_net.create_variables(input_tensor_spec=single_agent_time_step_spec.observation)
 # target_q_net = q_net.copy(_name='Target_Q_Network')
 
-learning_rate = 1e-4
+learning_rate = 3e-4
 # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
 #     initial_learning_rate=1e-2,
 #     decay_steps=9600,
@@ -111,9 +111,9 @@ kwargs = {
     # 'td_errors_loss_fn': common.element_wise_squared_loss,
     # 'epsilon_greedy': 0.1,
     'epsilon_greedy': None,
-    'boltzmann_temperature': 0.01,
-    'target_update_tau': 0.01,
-    'target_update_period': 10,
+    'boltzmann_temperature': 0.8,
+    'target_update_tau': 0.001,
+    'target_update_period': 1000,
 }
 
 reward_function = rf.vanilla
@@ -174,8 +174,6 @@ variable_list = list(itertools.chain.from_iterable([module.variables if isinstan
                                                                                               in multi_agent.submodules]))
 for var in variable_list:
     print(var.device, var.name)
-# input("Press Enter to continue...")
-
 # data = create_train_data(agent_list[0],
 #                          multi_agent.wrap_policy(SmartCharger(0.5, num_actions, single_agent_time_step_spec), True),
 #                          train_env,
@@ -185,13 +183,14 @@ st = time()
 # with strategy.scope():
 #     multi_agent.train()
 # return_list = []
-# eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
+# # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
 # eval_policy = SmartCharger(0.5, num_actions, single_agent_time_step_spec)
 # for i in range(5, 101, 5):
 #     i /= 100
 #     eval_policy.threshold = i
 #     return_list.append((i, multi_agent.eval_policy([eval_policy]).numpy()))
 # print(return_list)
+# input("Press Enter to continue...")
 multi_agent.train()
 print(multi_agent.eval_policy())
 et = time()

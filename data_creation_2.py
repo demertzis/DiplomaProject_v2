@@ -106,7 +106,8 @@ def create_train_data(agent, policy, env, epochs):
         standard deviation of 1 (here the x values of the distribution are the different actions (0 - num_actions)
         """
         gaussian = lambda x: tf.math.minimum(0., 2. * value) + tf.abs(value) * \
-                             tf.math.exp(-1.0 * (x - action_num) ** 2 / (2 * 1 ** 2))
+                             tf.math.exp(-0.5 * ((x - action_num) / 0.5) ** 2)
+                             # tf.math.exp(-1.0 * (x - action_num) ** 2 / (2 * 0.5 ** 2))
         return tf.vectorized_map(lambda t: gaussian(t),
                                  tf.range(num_actions, dtype=tf.float32))
     index = tf.Variable(0)
@@ -148,7 +149,6 @@ def create_train_data(agent, policy, env, epochs):
     for _ in range(5):
         env.hard_reset()
         driver.run(env.reset())
-
-    with open('colab_data_output_16.csv', "w") as file:
+    with open('colab_data_output_8.csv', "w") as file:
         np.savetxt(file, final_tensor.numpy(), delimiter=',')
 
