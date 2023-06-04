@@ -86,7 +86,7 @@ target_q_net = sequential.Sequential(temp_target_model.layers, name='TargetQNetw
 # temp = q_net.create_variables(input_tensor_spec=single_agent_time_step_spec.observation)
 # target_q_net = q_net.copy(_name='Target_Q_Network')
 
-learning_rate = 3e-4
+learning_rate = 1e-3
 # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
 #     initial_learning_rate=1e-2,
 #     decay_steps=9600,
@@ -109,9 +109,9 @@ kwargs = {
     #                                                                                   amsgrad=True),),
     'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
     # 'td_errors_loss_fn': common.element_wise_squared_loss,
-    # 'epsilon_greedy': 0.1,
+    # 'epsilon_greedy': 0.2,
     'epsilon_greedy': None,
-    'boltzmann_temperature': 0.8,
+    'boltzmann_temperature': 1.0,
     'target_update_tau': 0.001,
     'target_update_period': 1000,
 }

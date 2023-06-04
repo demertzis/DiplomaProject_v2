@@ -103,8 +103,8 @@ def create_single_agent(cls: type,
                                            dtype=tf.int64,
                                            trainable=False,
                                            name=name + ': eval steps')
-
-            super(cls, self).__init__(*args, **kwargs)
+            self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name=name + ': global step')
+            super(cls, self).__init__(*args, train_step_counter=self.global_step, **kwargs)
             self._name = name
             self.checkpointer = Checkpointer(
                 ckpt_dir='/'.join([ckpt_dir, self._name]),

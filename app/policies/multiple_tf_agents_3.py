@@ -2,8 +2,6 @@ import sys
 from typing import List, Optional
 import tensorflow as tf
 from tf_agents.agents import TFAgent, data_converter
-from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
-from tf_agents.drivers.dynamic_step_driver import DynamicStepDriver
 from tf_agents.drivers.tf_driver import TFDriver
 from tf_agents.metrics import tf_metrics
 from tf_agents.policies.tf_policy import TFPolicy
@@ -11,7 +9,6 @@ from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.specs import tensor_spec
 
 import config
-from app.abstract.utils import MyDynamicEpisodeDriver
 from config import MAX_BUFFER_SIZE
 from tf_agents.trajectories import time_step as ts, TimeStep
 
@@ -48,7 +45,7 @@ class MultiAgentPolicyWrapper(TFPolicy):
             info_spec=info_spec or tensor_spec.TensorSpec(shape=(1,), dtype=tf.int64),
         )
         self._policy_list = policy_list
-        self._global_step = tf.Variable(global_step, dtype=tf.int64, trainable=False)
+        self._global_step = tf.Variable(global_step, dtype=tf.int64, trainable=False, name='policy global step')
         self._collect = collect
         self._num_of_agents = len(policy_list)
         self._time_step_int_tensor = tf.Variable(0,
@@ -122,8 +119,10 @@ class MultipleAgents(tf.Module):
             info_spec=tensor_spec.TensorSpec(shape=(1,), dtype=tf.int64),
         )
         self._total_loss = tf.Variable([0.0] * self._number_of_agents, dtype=tf.float32, trainable=False)
-        self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False)
+        self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name='GLOBAL_STEP_MA')
+        device = "/GPU:0" if len(tf.config.list_physical_devices('GPU')) else "/device:CPU:0"
         self.replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(self.collect_data_spec,
+                                                                            device=device,
                                                                             batch_size=self.train_env.batch_size,
                                                                             max_length=self.replay_buffer_capacity)
         self.checkpoint = common.Checkpointer(
