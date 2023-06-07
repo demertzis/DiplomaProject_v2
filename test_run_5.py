@@ -109,11 +109,11 @@ kwargs = {
     #                                                                                   amsgrad=True),),
     'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
     # 'td_errors_loss_fn': common.element_wise_squared_loss,
-    # 'epsilon_greedy': 0.2,
-    'epsilon_greedy': None,
-    'boltzmann_temperature': 1.0,
-    'target_update_tau': 0.001,
-    'target_update_period': 1000,
+    'epsilon_greedy': 0.15,
+    # 'epsilon_greedy': None,
+    # 'boltzmann_temperature': 1.0,
+    'target_update_tau': 1.0,
+    'target_update_period': 100,
 }
 
 reward_function = rf.vanilla
@@ -134,7 +134,7 @@ for i in range(NUMBER_OF_AGENTS):
                                           buffer_max_size=MAX_BUFFER_SIZE,
                                           num_of_actions=num_actions,
                                           capacity_train_garage=100,
-                                          capacity_eval_garage=200,
+                                          capacity_eval_garage=100,
                                           name='Agent-' + str(i+1),
                                           num_of_agents=NUMBER_OF_AGENTS,
                                           coefficient_function=coefficient_function,

@@ -67,8 +67,10 @@ class Parking:
     _charge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
     _discharge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
     _current_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, tf.float32).numpy()
-    _max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, tf.float32).numpy()
+    # _max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, tf.float32).numpy()
+    _max_charging_rate = float(cfg.MAX_CHARGING_RATE)
+    # _max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, tf.float32).numpy()
+    _max_discharging_rate = float(cfg.MAX_DISCHARGING_RATE)
 
     def __init__(self, capacity: int, name: str):
         self._capacity = tf.constant(capacity, tf.int64)

@@ -221,7 +221,7 @@ def vehicle_arrival_generator(coefficient_function: Optional[Callable],
     """
     if bool(coefficient_function) == bool(vehicle_list):
         raise ValueError('Incompatible arguments given. Generator either '
-                         'produces values using coeffiecient_function or iterates'
+                         'produces values using coefficient_function or iterates'
                          ' through given vehicle list not both')
 
     time_of_day = 0

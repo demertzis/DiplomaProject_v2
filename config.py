@@ -21,4 +21,4 @@ AVG_CONSUMPTION = lambda : reduce(lambda x, y: x + y, GARAGE_LIST, 0.0) * AVG_CH
 # TRAIN_ITERATIONS = 24 * 100 * 500
 TRAIN_ITERATIONS = 1000
 
-USE_JIT = True
+USE_JIT = False

@@ -159,7 +159,7 @@ class MultipleAgents(tf.Module):
                                      disable_tf_function=False)
         # self._eval_driver.run = tf.function(self._eval_driver.run, jit_compile=True)
         for agent in self._agent_list:
-            # agent.train = tf.function(jit_compile=config.USE_JIT)(agent.train)
+            # agent.train = tf.function(agent.train, jit_compile=config.USE_JIT)
             agent.private_index = self.global_step
 
 

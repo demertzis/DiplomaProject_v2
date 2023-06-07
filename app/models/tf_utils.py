@@ -122,18 +122,20 @@ def tf_find_intersection_vectorized_f32(x1, y1, c, num_of_vehicles) -> tf.Tensor
     diff = y1[..., :-1] - c
     diff_plus_one = y1[..., 1:] - c
     transition_tensor = (diff_plus_one * diff)[..., 1:]
-    # transition_tensor = (diff_plus_one * diff) + tf.constant([[1.0] + [0.0] * 11], tf.float16)
-    intersection_tensor = tf.where(tf.less_equal(transition_tensor , 0.0),
-                                   1.0,
-                                   0.0)
-    # final_indexes = tf.math.argmax(intersection_tensor, axis=2, output_type=tf.int32)
-    # gather_tensor = tf.where(tf.less(0, final_indexes), final_indexes + 1, 0)
+    # intersection_tensor = tf.where(tf.less_equal(transition_tensor , 0.0),
+    #                                1.0,
+    #                                0.0)
+    intersection_tensor = tf.cast(tf.less_equal(transition_tensor , 0.0), tf.float32)
     final_indexes = tf.math.argmax(intersection_tensor, axis=2, output_type=tf.int32) + 1
-    gather_tensor = tf.where(tf.logical_and(tf.equal(final_indexes, 1),
-                                              tf.logical_or(tf.equal(diff[..., 1], 0.0),
-                                                             tf.less(0.0, transition_tensor[..., 0])),),
-                               0,
-                               final_indexes)
+    # gather_tensor_2 = tf.where(tf.logical_and(tf.equal(final_indexes, 1),
+    #                                           tf.logical_or(tf.equal(diff[..., 1], 0.0),
+    #                                                          tf.less(0.0, transition_tensor[..., 0])),),
+    #                            0,
+    #                            final_indexes)
+    mask = tf.logical_or(tf.not_equal(final_indexes, 1),
+                                  tf.logical_and(tf.not_equal(diff[..., 1], 0.0),
+                                                 tf.less_equal(transition_tensor[..., 0], 0.0)))
+    gather_tensor = tf.cast(mask, tf.int32) * final_indexes
     indexes = tf.stack((tf.transpose(tf.stack((tf.zeros(num_of_vehicles, tf.int32),
                                                tf.range(num_of_vehicles)), 0)),
                         tf.transpose(tf.stack((tf.ones(num_of_vehicles, tf.int32),
