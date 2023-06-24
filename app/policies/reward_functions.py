@@ -93,10 +93,8 @@ def vanilla(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.nd
 
 def halfway_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: int, action: np.ndarray) -> np.ndarray:
 	sell_price_min = crid_price * CRID_COEFFICIENT
-
 	total_sell_load = abs(np.sum(action, where = [i < 0 for i in action]))
 	total_buy_load = np.sum(action, where = [i >= 0 for i in action])
-
 	common_load = min(total_sell_load, total_buy_load) if prices[tick] > sell_price_min else 0
 	common_part = (sell_price_min + prices[tick]) / 2 * common_load if prices[tick] > sell_price_min else 0
 	final_sell_price = ((total_sell_load - common_load) * sell_price_min + common_part) / \
@@ -105,7 +103,6 @@ def halfway_uniform_rewards(prices: np.ndarray, crid_price: np.float32, tick: in
 	                   + common_part
 	                   + min(AVG_CONSUMPTION(), total_buy_load - common_load) * prices[tick]) /\
                       total_buy_load if total_buy_load > 0.0 else 0.0
-
 	# rewards = np.asarray([i * (final_buy_price if i > 0 else final_sell_price) for i in action])
 	# final_revenue = np.sum(rewards) - min(AVG_CONSUMPTION(), np.sum(action)) * prices[tick] - max(0, np.sum(
 	# 	action) - AVG_CONSUMPTION())

@@ -66,21 +66,22 @@ class MultiAgentPolicyWrapper(TFPolicy):
                       policy_state: types.NestedTensor,
                       seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
         #print('Tracing _action')
-        policy_action_list = [lambda: policy.action(time_step) for policy in self._policy_list]
-        action_tensor = tf.map_fn(lambda id: tf.switch_case(id,
-                                                            policy_action_list).action,
-                                  self._agent_id_tensor,
-                                  fn_output_signature=tf.float32,
-                                  parallel_iterations=self._num_of_agents)[0]
-        # action_tensor = tf.vectorized_map(lambda id: tf.switch_case(id,
-        #                                                             policy_action_list).action,
-        #                                   self._agent_id_tensor)
-        # tf.print(action_tensor)
+        # policy_action_list = [lambda: policy.action(time_step) for policy in self._policy_list]
+        # action_tensor = tf.map_fn(lambda id: tf.switch_case(id,
+        #                                                     policy_action_list).action,
+        #                           self._agent_id_tensor,
+        #                           fn_output_signature=tf.float32,
+        #                           parallel_iterations=self._num_of_agents)
+        action_list = [0.0 for _ in range(self._num_of_agents)]
+        for i in range(self._num_of_agents):
+            action_list[i] = self._policy_list[i].action(time_step).action
+        action_tensor = tf.stack(action_list, axis=0)
+
         info = tf.fill([tf.shape(time_step.observation)[0], 1], self._global_step % MAX_BUFFER_SIZE)
         # info = tf.fill([tf.shape(time_step.observation)[0]], self._global_step % MAX_BUFFER_SIZE)
         if self._collect:
             self._global_step.assign_add(1)
-        return policy_step.PolicyStep(action=action_tensor, state=(), info=info)
+        return policy_step.PolicyStep(action=tf.expand_dims(action_tensor, axis=0), state=(), info=info)
 
 class MultipleAgents(tf.Module):
     # num_iterations = 24 * 100 * 100
@@ -160,6 +161,7 @@ class MultipleAgents(tf.Module):
         # self._eval_driver.run = tf.function(self._eval_driver.run, jit_compile=True)
         for agent in self._agent_list:
             # agent.train = tf.function(agent.train, jit_compile=config.USE_JIT)
+            agent.train = tf.function(agent.train, jit_compile=True)
             agent.private_index = self.global_step
 
 
@@ -183,8 +185,9 @@ class MultipleAgents(tf.Module):
 
 
     def train(self):
-        best_avg_return = self.eval_policy()
-        print(best_avg_return)
+        if not config.USE_JIT:
+            best_avg_return = self.eval_policy()
+            print(best_avg_return)
         dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3,
             sample_batch_size=self.batch_size,
@@ -198,14 +201,21 @@ class MultipleAgents(tf.Module):
                      max_steps=self.initial_collect_steps,
                      disable_tf_function=False).run(self.train_env.reset())
 
+        # @tf.function(jit_compile=True)
+        # def _train_on_experience(experience):
+        #     train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
+        #     train_loss = tf.map_fn(lambda id: tf.switch_case(id,
+        #                                                      train_list),
+        #                            tf.range(self._number_of_agents, dtype=tf.int32),
+        #                            fn_output_signature=tf.float32,
+        #                            parallel_iterations=self._number_of_agents)
+        #     self._total_loss.assign_add(train_loss / tf.cast(24 * self.epochs, tf.float32))
         @tf.function(jit_compile=True)
         def _train_on_experience(experience):
-            train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
-            train_loss = tf.map_fn(lambda id: tf.switch_case(id,
-                                                             train_list),
-                                   tf.range(self._number_of_agents, dtype=tf.int32),
-                                   fn_output_signature=tf.float32,
-                                   parallel_iterations=self._number_of_agents)
+            train_loss_list = [0.0 for _ in range(self._number_of_agents)]
+            for i in range(self._number_of_agents):
+                train_loss_list[i] = self._agent_list[i].train(experience).loss
+            train_loss = tf.stack(train_loss_list, axis=0)
             self._total_loss.assign_add(train_loss / tf.cast(24 * self.epochs, tf.float32))
 
         def _train_step():
@@ -222,13 +232,16 @@ class MultipleAgents(tf.Module):
         def train_epoch():
             self.train_env.hard_reset()
             collect_driver.run(self.train_env.reset())
-            return self.eval_policy()
+            if config.USE_JIT:
+                return tf.constant([0.0])
+            else:
+                return self.eval_policy()
 
         # collect_driver.run = tf.function(collect_driver.run, jit_compile=True)
         time_step = self.train_env.reset()
-        epoch_st = 0.0
         # epoch_train_st = 0.0
         loss_acc = [0.0] * self._number_of_agents
+        epoch_st = time.time()
 
 
         for i in range(1, self.num_iterations+1):
@@ -240,29 +253,37 @@ class MultipleAgents(tf.Module):
             print('Epoch duration: ', epoch_et - epoch_st)
             epoch_st = epoch_et
             self.returns.append(avg_return)
-            if i % 100 == 0:
+            if config.KEEP_BEST:
+                if avg_return > best_avg_return:
+                    best_avg_return = avg_return
+                    self.global_step.assign(self.collect_policy.global_step)
+                    self.checkpoint.save(self.global_step)
+                    for agent in self._agent_list:
+                        agent.checkpoint_save(self.global_step)
+            elif i % 100 == 0:
                 self.global_step.assign(self.collect_policy.global_step)
                 self.checkpoint.save(self.global_step)
                 for agent in self._agent_list:
                     agent.checkpoint_save(self.global_step)
 
-        self.global_step.assign(self.collect_policy.global_step)
-        self.checkpoint.save(self.global_step)
-        for agent in self._agent_list:
-            agent.checkpoint_save(self.global_step)
+
+        # self.global_step.assign(self.collect_policy.global_step)
+        # self.checkpoint.save(self.global_step)
+        # for agent in self._agent_list:
+        #     agent.checkpoint_save(self.global_step)
         # print('Final avg consumption: ', best_avg_return)
         # self.checkpoint.save(global_step=self._agent_list[0].train_step_counter)
         # for agent in self._agent_list:
         #     agent.checkpoint_save()
 
-    def wrap_policy(self, policy_list, collect: bool):
-        if not isinstance(policy_list, list):
-            policy_list = [policy_list] * self._number_of_agents
-        elif len(policy_list) == 1:
-            policy_list = policy_list * self._number_of_agents
-        elif len(policy_list) != self._number_of_agents:
-            raise Exception('Policies List given should either be a single policy that will be projected to all'
-                            'agents or a list with length equal to the number of agents')
+    def wrap_policy(self, policy_list: list, collect: bool):
+        # if not isinstance(policy_list, list):
+            # policy_list = [policy_list] * self._number_of_agents
+        # elif len(policy_list) == 1:
+        #     policy_list = policy_list * self._number_of_agents
+        if len(policy_list) != self._number_of_agents:
+           raise Exception('Policies List should be a list of size equal to the number of agents, and have different,'
+                           'policy objects')
         for i, policy in enumerate(policy_list):
             policy.action = self._agent_list[i].wrap_external_policy_action(policy.action, collect)
         env = self.train_env if collect else self.eval_env
@@ -292,7 +313,8 @@ class MultipleAgents(tf.Module):
                               max_episodes=self.num_eval_episodes,
                               disable_tf_function=False)
             # driver.run = tf.function(driver.run, jit_compile=True)
-            driver.run(self.eval_env.reset())
+            time_step = self.eval_env.reset()
+            driver.run(time_step)
             return self._metric.result()
 
 

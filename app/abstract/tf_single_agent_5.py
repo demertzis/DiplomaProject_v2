@@ -203,7 +203,7 @@ def create_single_agent(cls: type,
         # @tf.function
         def _train(self, experience: types.NestedTensor,
                    weights: types.Tensor) -> LossInfo:
-            #print('Tracing train')
+            print('Tracing train')
             return super()._train(self.preprocess_sequence(experience), weights)
 
         def _action_wrapper(self, action, collect=True):
@@ -263,10 +263,12 @@ def create_single_agent(cls: type,
                                           tf.squeeze(augmented_obs),
                                           False)
                     # load = tf.expand_dims(load, axis=0)
-                    load = tf.reshape(load, [1, -1])
+                    # load = tf.reshape(load, [1, -1])
+                    # return step.replace(action=tf.reshape(load, shape=[1]))
+                    # load = tf.reshape(load, [1, -1])
                     return step.replace(action=load)
 
-            # @tf.function(jit_compile=True)
+            @tf.function(jit_compile=True)
             def wrapped_action_collect(time_step: TimeStep,
                                        policy_state: types.NestedTensor = (),
                                        seed: Optional[types.Seed] = None,) -> PolicyStep:
@@ -309,8 +311,9 @@ def create_single_agent(cls: type,
                 load = self._get_load(tf.squeeze(step.action),
                                       tf.squeeze(augmented_obs),
                                       True)
-                load = tf.reshape(load, [1, -1])
                 return step.replace(action=load)
+                # load = tf.reshape(load, [1, -1])
+                # return step.replace(action=load)
 
             return wrapped_action_collect if collect else wrapped_action_eval
 
