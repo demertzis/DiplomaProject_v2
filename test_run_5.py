@@ -24,6 +24,7 @@ from app.abstract.tf_single_agent_5 import create_single_agent
 from data_creation_2 import create_train_data
 
 tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
+# tf.debugging.enable_check_numerics()
 
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
@@ -105,7 +106,8 @@ learning_rate = 3e-4
 
 # reward_function = rf.vanilla
 # reward_function = rf.punishing_uniform
-reward_function = rf.punishing_non_uniform
+# reward_function = rf.punishing_non_uniform_non_individually_rational
+reward_function = rf.punishing_non_uniform_individually_rational
 reward_name = reward_function.__name__
 
 ckpt_dir = '/'.join(['checkpoints',
