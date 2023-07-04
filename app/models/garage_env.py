@@ -80,8 +80,8 @@ class V2GEnvironment(PyEnvironment):
         self._next_agent: Any = next_agent
         self._charge_list: List[np.float32] = charge_list
 
-    # def get_metrics(self):
-    #     return self._state["metrics"]
+    def get_metrics(self):
+        return self._state["metrics"]
 
     def _update_avg_demand_list(self): #TODO implement way to calculate expected consumption at given time
         if not self._vehicle_distribution:

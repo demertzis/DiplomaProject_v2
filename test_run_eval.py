@@ -1,95 +1,171 @@
 import json
+import math
 
-from app.models.energy import EnergyCurve
-from app.utils import VehicleDistributionList
-from typing import List
-from app.policies.smart_charger import DummyV2G
-from app.policies.dummy_v2g import SmartCharger
-from app.policies.utils import metrics_visualization
-from app.policies.dqn import DQNPolicy
-from app.models.garage_env import V2GEnvironment
-from config import NUMBER_OF_AGENTS
-import numpy as np
-from gym.envs.registration import register
-import gym
+from tf_agents.agents.dqn.dqn_agent import DdqnAgent
+from tf_agents.specs import tensor_spec
+from tf_agents.trajectories.time_step import TimeStep
+import tensorflow as tf
+from tf_agents.networks import sequential
+import app.policies.tf_reward_functions as rf
+import config
+
+from app.models.tf_energy_3 import EnergyCurve
+from app.policies.multiple_tf_agents_3 import MultipleAgents
+from app.policies.tf_smart_charger import SmartCharger
+from config import MAX_BUFFER_SIZE, AVG_CHARGING_RATE
+
+from app.models.tf_pwr_env_3 import TFPowerMarketEnv
+
+from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
+from app.abstract.tf_single_agent_5 import create_single_agent
+
+tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
+NUMBER_OF_AGENTS = 50
+# tf.debugging.enable_check_numerics()
+
+
+tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
+with open('data/vehicles_constant_shape.json') as file:
+    vehicles = VehicleDistributionListConstantShape(json.loads(file.read()))
+with open('data/vehicles_constant_shape_offset.json') as file:
+    offset_vehicles = VehicleDistributionListConstantShape(json.loads(file.read()))
+
+
+single_agent_time_step_spec = TimeStep(
+    step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int64, minimum=0, maximum=2),
+    discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.float32, minimum=0.0, maximum=1.0),
+    reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
+    observation=tensor_spec.BoundedTensorSpec(shape=(34,), dtype=tf.float32, minimum=-1., maximum=1.))
+
+num_actions = 8
+single_agent_action_spec = tensor_spec.BoundedTensorSpec(
+            shape=(), dtype=tf.int64, minimum=0, maximum=num_actions-1, name="action")
+
+model_dir = 'pretrained_networks/model_output_8.keras'
+# model_dir = 'pretrained_networks/new_models/model_output_8_agent2.keras'
+offset_model_dir = 'pretrained_networks/model_output_8_offset.keras'
+
+def load_pretrained_model(model_dir):
+    keras_model = tf.keras.models.load_model(model_dir)
+    layers_list = []
+    i = 0
+    while True:
+        try:
+            layers_list.append(keras_model.get_layer(index=i))
+        except IndexError:
+            print('{0}: Total number of layers in neural network: {1}'.format('q-net', i))
+            break
+        except ValueError:
+            print('{0}: Total number of layers in neural network: {1}'.format('offset-q-net', i))
+            break
+        else:
+            i += 1
+
+    temp_model = tf.keras.Sequential(layers_list)
+    temp_model.build(input_shape=(1,34))
+    temp_target_model = tf.keras.models.clone_model(temp_model)
+
+
+    q_net = sequential.Sequential(temp_model.layers, name='QNetwork')
+    target_q_net = sequential.Sequential(temp_target_model.layers, name='TargetQNetwork')
+    return q_net, target_q_net
+
+q_net, target_q_net = load_pretrained_model(model_dir)
+offset_q_net, offset_target_q_net = load_pretrained_model(model_dir)
+
+
+learning_rate = 3e-4
+# reward_function = rf.vanilla
+# reward_function = rf.punishing_uniform
+# reward_function = rf.punishing_non_uniform_non_individually_rational
+reward_function = rf.punishing_non_uniform_individually_rational
+reward_name = reward_function.__name__
+
+ckpt_dir = '/'.join(['checkpoints',
+                     str(6) +
+                     '_AGENTS',
+                     reward_name])
+
+coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5
+offset_coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * (x + 3.0)) / 2.0 + 0.5
+agent_list = []
+offset = False
+for i in range(NUMBER_OF_AGENTS):
+    if i % 3 == 2:
+        offset = True
+    else:
+        offset = False
+    kwargs = {
+        'time_step_spec': single_agent_time_step_spec,
+        'action_spec': single_agent_action_spec,
+        # 'q_network': q_net,
+        'q_network': q_net if not offset else offset_q_net,
+        # 'target_q_network': target_q_net,
+        'target_q_network': target_q_net if not offset else offset_target_q_net,
+        # 'optimizer': tf.keras.mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(learning_rate=learning_rate,
+        #                                                                                   amsgrad=True),),
+        'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        # 'td_errors_loss_fn': common.element_wise_squared_loss,
+        # 'epsilon_greedy': 0.2,
+        'epsilon_greedy': None,
+        'boltzmann_temperature': 0.9,
+        'target_update_tau': 0.1,
+        'target_update_period': 2400,
+    }
+    agent_list.append(create_single_agent(cls=DdqnAgent,
+                                          ckpt_dir=ckpt_dir,
+                                          # vehicle_distribution=list(offset_vehicles),
+                                          vehicle_distribution=list(vehicles) if not offset else offset_vehicles,
+                                          buffer_max_size=MAX_BUFFER_SIZE,
+                                          num_of_actions=num_actions,
+                                          capacity_train_garage=100,
+                                          capacity_eval_garage=100,
+                                          name='Agent-'+str((i%6)+1),
+                                          num_of_agents=NUMBER_OF_AGENTS,
+                                          # coefficient_function=offset_coefficient_function,
+                                          coefficient_function=coefficient_function if not offset else offset_coefficient_function,
+                                          **kwargs))
+
+collect_avg_vehicles_list = tf.constant([0.0]*24)
+days = 500
+for agent in agent_list:
+    collect_avg_vehicles_list += calculate_avg_distribution_constant_shape(days,
+                                                                           agent.train_vehicles_generator)
+# collect_avg_vehicles_list = collect_avg_vehicles_list.numpy()
+
+eval_avg_vehicle_list = tf.constant([0.0] * 24)
+for i in range(len(agent_list)):
+    eval_avg_vehicle_list += vehicles.avg_vehicles_list if i % 3 != 2 else offset_vehicles.avg_vehicles_list
+    # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
 energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
 energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
-register(
-    id='PowerTrain-v0',
-    entry_point='app.models.power_market_env:PowerMarketEnv',
-    kwargs={
-        'energy_curve': energy_curve_train,
-        'reward_function': 0
-    }
-)
+train_env = TFPowerMarketEnv(energy_curve_train,
+                             reward_function,
+                             NUMBER_OF_AGENTS,
+                             [AVG_CHARGING_RATE * v for v in collect_avg_vehicles_list.numpy()],
+                             True)
+eval_env = TFPowerMarketEnv(energy_curve_eval,
+                            reward_function,
+                            NUMBER_OF_AGENTS,
+                            [AVG_CHARGING_RATE * v for v in eval_avg_vehicle_list.numpy()],
+                            False)
 
-register(
-    id='PowerEval-v0',
-    entry_point='app.models.power_market_env:PowerMarketEnv',
-    kwargs={
-        'energy_curve': energy_curve_eval,
-        'reward_function': 0
-    }
-)
+multi_agent = MultipleAgents(train_env,
+                             eval_env,
+                             agent_list,
+                             'temp_checkpoint_eval',)
 
-market_env_train = gym.make('PowerTrain-v0')
-market_env_eval = gym.make('PowerEval-v0')
-
-train_env = V2GEnvironment(300, './data/GR-data-new.csv', 'train')
-
-with open("data/vehicles_old.json", "rb") as file:
-    vehicles = VehicleDistributionList(json.load(file))
-
-
-charge_list: List[np.float32] = []
-agent_list: List[DQNPolicy] = []
-
-# DQN
-eval_env = V2GEnvironment(300, './data/GR-data-new.csv', 'eval', vehicles)
-
-# garage_env_list = List[V2GEnvironment] = []
-for _ in range(NUMBER_OF_AGENTS):
-    next_agent = agent_list[0] if len(agent_list) > 0 else None
-    train_env = V2GEnvironment(capacity=100, mode="train", name="Train_Env_" + str(NUMBER_OF_AGENTS -_), power_market_env=market_env_train, next_agent=next_agent,
-                               charge_list=charge_list)
-    eval_env = V2GEnvironment(capacity=200, mode='eval', name="Eval_Env_" + str(NUMBER_OF_AGENTS - _), vehicle_distribution=vehicles, power_market_env=market_env_eval,
-                              next_agent=next_agent, charge_list=charge_list)
-
-    new_agent = DQNPolicy(train_env, eval_env, name="Agent_" + str(NUMBER_OF_AGENTS - _), charge_list=charge_list)
-
-    agent_list.insert(0, new_agent)
+return_list = []
+# eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
+eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in agent_list]
+for i in range(5, 101, 5):
+    i /= 100
+    for policy in eval_policy:
+        policy.threshold = i
+    return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
+print(return_list)
+print(multi_agent.eval_policy())
 
 
-# agent_list[0].trickle_down('raw_eval_env.hard_reset()')
-# agent_list[0].trickle_down('eval_env.reset()')
-# for agent in agent_list: agent.set_policy()
-
-# agent_list[0].compute_eval_list(10)
-# ret = agent_list[0].compute_avg_agent_loss()
-# print(f"Dqn agents: The average return: {ret}")
-print(f"Dqn agents: The average return: {agent_list[0].evaluate_policy()}")
-# metrics_visualization(eval_env.get_metrics(), 0, 'dqn')
-
-# Dummy V2G
-# agent_list[0].trickle_down('raw_eval_env.hard_reset()')
-# agent_list[0].trickle_down('eval_env.reset()')
-# for agent in agent_list: agent.set_policy(DummyV2G(0.5))
-#
-# agent_list[0].compute_eval_list(10)
-# ret = agent_list[0].compute_avg_agent_loss()
-# print(f"Dummy agents: The average return: {ret}")
-print(f"Dummy agents: The average return: {agent_list[0].evaluate_policy(DummyV2G(0.5))}")
-# metrics_visualization(eval_env.get_metrics(), 0, 'dummy_v2g')
-
-# Smart Charger
-# agent_list[0].trickle_down('raw_eval_env.hard_reset()')
-# agent_list[0].trickle_down('eval_env.reset()')
-# for agent in agent_list: agent.set_policy(SmartCharger(0.5))
-#
-# agent_list[0].compute_eval_list(10)
-# ret = agent_list[0].compute_avg_agent_loss()
-# print(f"Smart_agents: The average return: {ret}")
-print(f"Smart_agents: The average return: {agent_list[0].evaluate_policy(SmartCharger(0.5))}")
-# metrics_visualization(eval_env.get_metrics(), 0, 'smart_charger')

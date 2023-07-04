@@ -173,6 +173,7 @@ class MultipleAgents(tf.Module):
     def collect_data_spec(self):
         return self._collect_data_context.trajectory_spec
 
+
     # @tf.function
     # def _train_step(self, experience):
     #     train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
