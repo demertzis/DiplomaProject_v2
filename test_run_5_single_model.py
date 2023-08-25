@@ -1,6 +1,7 @@
 import itertools
 import json
 import math
+import sys
 from time import time
 
 from tf_agents.agents.dqn.dqn_agent import DdqnAgent
@@ -12,21 +13,35 @@ import app.policies.tf_reward_functions as rf
 import config
 
 from app.models.tf_energy_3 import EnergyCurve
-from app.policies.multiple_tf_agents_3 import MultipleAgents
+from app.policies.multiple_tf_agents_single_model import MultipleAgents
 from app.policies.tf_dummy_v2g import DummyV2G
 from app.policies.tf_smart_charger import SmartCharger
-from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
+# from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
+from config import MAX_BUFFER_SIZE, AVG_CHARGING_RATE
 
-from app.models.tf_pwr_env_3 import TFPowerMarketEnv
+from app.models.tf_pwr_env_4 import TFPowerMarketEnv
 
 from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
-from app.abstract.tf_single_agent_5 import create_single_agent
+from app.abstract.tf_single_agent_single_model import create_single_agent
 from data_creation_2 import create_train_data
 
 tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
-
+try:
+    argument_num_of_agents = int(sys.argv[1])
+except:
+    argument_num_of_agents = config.NUMBER_OF_AGENTS
+NUMBER_OF_AGENTS = argument_num_of_agents
 # tf.debugging.enable_check_numerics()
+reward_function_array = [rf.vanilla,
+                         rf.punishing_uniform,
+                         rf.punishing_non_uniform_non_individually_rational,
+                         rf.punishing_non_uniform_individually_rational,]
+try:
+    reward_function = reward_function_array[int(sys.argv[2])]
+except:
+    reward_function = reward_function_array[0]
 
+print("Train run: {} agents, reward function = {}".format(NUMBER_OF_AGENTS, reward_function.__name__))
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 with open('data/vehicles_constant_shape.json') as file:
@@ -79,16 +94,20 @@ def load_pretrained_model(model_dir):
             i += 1
 
     temp_model = tf.keras.Sequential(layers_list)
-    temp_model.build(input_shape=(1,34))
-    temp_target_model = tf.keras.models.clone_model(temp_model)
+    # temp_model.build(input_shape=(1,34))
+    # temp_target_model = tf.keras.models.clone_model(temp_model)
 
 
     q_net = sequential.Sequential(temp_model.layers, name='QNetwork')
-    target_q_net = sequential.Sequential(temp_target_model.layers, name='TargetQNetwork')
-    return q_net, target_q_net
+    # target_q_net = sequential.Sequential(temp_target_model.layers, name='TargetQNetwork')
+    # target_q_net = q_net.copy(name='TargetQNetwork')
+    # return q_net, target_q_net
+    return q_net
 
-q_net, target_q_net = load_pretrained_model(model_dir)
-offset_q_net, offset_target_q_net = load_pretrained_model(model_dir)
+# q_net, target_q_net = load_pretrained_model(model_dir)
+q_net = load_pretrained_model(model_dir)
+# offset_q_net, offset_target_q_net = load_pretrained_model(model_dir)
+offset_q_net = load_pretrained_model(offset_model_dir)
 
 
 learning_rate = 3e-4
@@ -107,7 +126,7 @@ learning_rate = 3e-4
 
 # reward_function = rf.vanilla
 # reward_function = rf.punishing_uniform
-reward_function = rf.punishing_non_uniform_non_individually_rational
+# reward_function = rf.punishing_non_uniform_non_individually_rational
 # reward_function = rf.punishing_non_uniform_individually_rational
 reward_name = reward_function.__name__
 
@@ -120,41 +139,63 @@ coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5
 offset_coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * (x + 3.0)) / 2.0 + 0.5
 agent_list = []
 offset = False
+
+gpus = tf.config.list_physical_devices('GPU')
+successful_gpu_division = False
+if gpus:
+  try:
+    gpu_mem = 15 * 1024 - tf.config.experimental.get_memory_info('GPU:0')
+    num_devices = NUMBER_OF_AGENTS + 1
+    tf.config.set_logical_device_configuration(
+        gpus[0],
+        [tf.config.LogicalDeviceConfiguration(memory_limit=(gpu_mem - 1024) / num_devices)] * (num_devices))
+    logical_gpus = tf.config.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPU,", len(logical_gpus), "Logical GPUs")
+  except RuntimeError as e:
+    # Virtual devices must be set before GPUs have been initialized
+    print(e)
+  successful_gpu_division = True
+
 for i in range(NUMBER_OF_AGENTS):
-    if i % 3 == 2:
-        offset = True
-    else:
-        offset = False
-    kwargs = {
-        'time_step_spec': single_agent_time_step_spec,
-        'action_spec': single_agent_action_spec,
-        # 'q_network': q_net,
-        'q_network': q_net if not offset else offset_q_net,
-        # 'target_q_network': target_q_net,
-        'target_q_network': target_q_net if not offset else offset_target_q_net,
-        # 'optimizer': tf.keras.mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(learning_rate=learning_rate,
-        #                                                                                   amsgrad=True),),
-        'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        # 'td_errors_loss_fn': common.element_wise_squared_loss,
-        # 'epsilon_greedy': 0.2,
-        'epsilon_greedy': None,
-        'boltzmann_temperature': 0.9,
-        'target_update_tau': 0.1,
-        'target_update_period': 2400,
-    }
-    agent_list.append(create_single_agent(cls=DdqnAgent,
-                                          ckpt_dir=ckpt_dir,
-                                          # vehicle_distribution=list(offset_vehicles),
-                                          vehicle_distribution=list(vehicles) if not offset else offset_vehicles,
-                                          buffer_max_size=MAX_BUFFER_SIZE,
-                                          num_of_actions=num_actions,
-                                          capacity_train_garage=100,
-                                          capacity_eval_garage=100,
-                                          name='Agent-' + str(i+1),
-                                          num_of_agents=NUMBER_OF_AGENTS,
-                                          # coefficient_function=offset_coefficient_function,
-                                          coefficient_function=coefficient_function if not offset else offset_coefficient_function,
-                                          **kwargs))
+    with tf.device(f'GPU:{i}' if successful_gpu_division else 'CPU:0'):
+        if i % 3 == 2:
+            offset = True
+        else:
+            offset = False
+        new_q_net = (offset_q_net if offset else q_net).copy(name='Agent_{}_QNetwork'.format(i))
+        new_target_q_net = (offset_q_net if offset else q_net).copy(name='Agent_{}_TargetQNetwork'.format(i))
+        kwargs = {
+            'time_step_spec': single_agent_time_step_spec,
+            'action_spec': single_agent_action_spec,
+            # 'q_network': q_net,
+            # 'q_network': q_net if not offset else offset_q_net,
+            'q_network': new_q_net,
+            'target_q_network': new_target_q_net,
+            # 'target_q_network': target_q_net,
+            # 'target_q_network': target_q_net if not offset else offset_target_q_net,
+            # 'optimizer': tf.keras.mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(learning_rate=learning_rate,
+            #                                                                                   amsgrad=True),),
+            'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
+            # 'td_errors_loss_fn': common.element_wise_squared_loss,
+            # 'epsilon_greedy': 0.2,
+            'epsilon_greedy': None,
+            'boltzmann_temperature': 0.9,
+            'target_update_tau': 0.1,
+            'target_update_period': 2400,
+        }
+        agent_list.append(create_single_agent(cls=DdqnAgent,
+                                              ckpt_dir=ckpt_dir,
+                                              # vehicle_distribution=list(offset_vehicles),
+                                              vehicle_distribution=list(vehicles) if not offset else offset_vehicles,
+                                              buffer_max_size=MAX_BUFFER_SIZE,
+                                              num_of_actions=num_actions,
+                                              capacity_train_garage=100,
+                                              capacity_eval_garage=100,
+                                              name='Agent-' + str(i+1),
+                                              num_of_agents=NUMBER_OF_AGENTS,
+                                              # coefficient_function=offset_coefficient_function,
+                                              coefficient_function=coefficient_function if not offset else offset_coefficient_function,
+                                              **kwargs))
 
 collect_avg_vehicles_list = tf.constant([0.0]*24)
 days = 500
@@ -168,19 +209,33 @@ for i in range(len(agent_list)):
     eval_avg_vehicle_list += vehicles.avg_vehicles_list if i % 3 != 2 else offset_vehicles.avg_vehicles_list
     # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
-energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
-energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
+with tf.device(f'GPU:{NUMBER_OF_AGENTS}' if successful_gpu_division else 'CPU:0'):
+    energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
+    energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
-train_env = TFPowerMarketEnv(energy_curve_train,
-                             reward_function,
-                             NUMBER_OF_AGENTS,
-                             [AVG_CHARGING_RATE * v for v in collect_avg_vehicles_list.numpy()],
-                             True)
-eval_env = TFPowerMarketEnv(energy_curve_eval,
-                            reward_function,
-                            NUMBER_OF_AGENTS,
-                            [AVG_CHARGING_RATE * v for v in eval_avg_vehicle_list.numpy()],
-                            False)
+    spec = single_agent_time_step_spec
+    env_time_step_spec = TimeStep(step_type=tensor_spec.add_outer_dim(spec.step_type, 1),
+                                  discount=tensor_spec.add_outer_dim(spec.discount, 1),
+                                  reward=tensor_spec.add_outer_dim(spec.reward, NUMBER_OF_AGENTS),
+                                  observation=tensor_spec.BoundedTensorSpec(shape=(13,),
+                                                                            dtype=tf.float32,
+                                                                            minimum=-1.,
+                                                                            maximum=1.))
+    env_action_spec = tensor_spec.TensorSpec(shape=(NUMBER_OF_AGENTS,), dtype=tf.float32, name="action")
+    train_env = TFPowerMarketEnv(env_time_step_spec,
+                                 env_action_spec,
+                                 energy_curve_train,
+                                 reward_function,
+                                 NUMBER_OF_AGENTS,
+                                 [AVG_CHARGING_RATE * v for v in collect_avg_vehicles_list.numpy()],
+                                 True)
+    eval_env = TFPowerMarketEnv(env_time_step_spec,
+                                env_action_spec,
+                                energy_curve_eval,
+                                reward_function,
+                                NUMBER_OF_AGENTS,
+                                [AVG_CHARGING_RATE * v for v in eval_avg_vehicle_list.numpy()],
+                                False)
 
 # for i, agent in enumerate(agent_list):
 #     new_model = tf.keras.models.Sequential(agent._q_network.layers)
@@ -218,8 +273,8 @@ if config.USE_JIT:
     multi_agent.train()
     print('Expired time: {}'.format(time() - st))
 else:
-    # return_list = []
-    # # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
+    return_list = []
+    # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
     # eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in agent_list]
     # for i in range(5, 101, 5):
     #     i /= 100
@@ -227,7 +282,7 @@ else:
     #         policy.threshold = i
     #     return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
     # print(return_list)
-    print(multi_agent.eval_policy())
+    # print(multi_agent.eval_policy())
     # input("Press Enter to continue...")
     st = time()
     multi_agent.train()

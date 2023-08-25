@@ -306,19 +306,45 @@ from app.utils import vehicle_arrival_generator,\
 # # st = time.time()
 # # np_test()
 # # print('np-time: ', time.time() - st)
-t = tf.constant(2, tf.int32)
-iterations = 100
-@tf.function
-def fun(t):
-    print('tracing')
-    a = [0 for _ in range(iterations)]
-    for i in range(iterations):
-        a[i] = i * t
-    tf.print(tf.stack(a, axis=0))
 
-st = time.time()
-fun(t)
-print(time.time() - st)
-st = time.time()
-fun(t)
-print(time.time() - st)
+import tensorflow as tf
+
+
+# Define the loop condition
+def loop_cond(i, tensors_list):
+    return tf.less(i, 5)
+
+
+# Define the loop body
+def loop_body(i, t):
+    # Generate a random tensor
+    random_tensor_1 = tf.random.normal(shape=(3, 3))
+    random_tensor_2 = tf.random.normal(shape=(3, 3))
+    random_tensor_3 = tf.random.normal(shape=(3, 3))
+    # Append the random tensor to the list
+    total_tensor = tf.parallel_stack([random_tensor_1, random_tensor_2, random_tensor_3])
+    # Increment the loop counter
+    return i, tf.reduce_sum(total_tensor, axis=0)
+
+
+# Initialize loop variables
+i_init = tf.constant(0)
+tensors_list_init = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
+
+# Execute the while loop
+@tf.function
+def fun():
+    _, stacked_tensors = tf.while_loop(
+        cond=loop_cond,
+        body=loop_body,
+        loop_vars=[i_init, tf.random.normal(shape=(3, 3))]
+    )
+
+    return stacked_tensors
+# Stack the tensors using parallel_stack INSIDE the loop
+
+# Start a TensorFlow session
+
+
+print("Stacked Tensors:")
+print(fun())

@@ -1,13 +1,7 @@
-import json
-import math
-
 import numpy as np
-from tf_agents.agents.dqn.dqn_agent import DdqnAgent
 from tf_agents.drivers.tf_driver import TFDriver
 from tf_agents.trajectories import TimeStep, Trajectory
 import tensorflow as tf
-
-
 
 def create_train_data(agent, policy, env, epochs):
     num_actions = agent.collect_policy.action_spec.maximum + 1

@@ -59,19 +59,19 @@ class Parking:
         parking_spaces (``ParkingSpace[]``) :
             description: An array containing all available parking spaces objects
     """
-    _next_max_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _next_min_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _next_max_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _next_min_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _charge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _discharge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _current_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    # _max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, tf.float32).numpy()
-    _max_charging_rate = float(cfg.MAX_CHARGING_RATE)
-    # _max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, tf.float32).numpy()
-    _max_discharging_rate = float(cfg.MAX_DISCHARGING_RATE)
-
     def __init__(self, capacity: int, name: str):
+        self._next_max_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self._next_min_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self._next_max_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self._next_min_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self._charge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self._discharge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        self._current_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
+        # self._max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, tf.float32).numpy()
+        self._max_charging_rate = float(cfg.MAX_CHARGING_RATE)
+        # self._max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, tf.float32).numpy()
+        self._max_discharging_rate = float(cfg.MAX_DISCHARGING_RATE)
+
         self._capacity = tf.constant(capacity, tf.int64)
         self._capacity_int32 = capacity
         self._vehicles = tf.Variable(tf.zeros(shape=(capacity, 13), dtype=tf.float32), trainable=False)

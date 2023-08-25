@@ -76,6 +76,7 @@ class MultiAgentPolicyWrapper(TFPolicy):
         for i in range(self._num_of_agents):
             action_list[i] = self._policy_list[i].action(time_step).action
         action_tensor = tf.stack(action_list, axis=0)
+        # action_tensor = tf.parallel_stack(action_list)
 
         info = tf.fill([tf.shape(time_step.observation)[0], 1], self._global_step % MAX_BUFFER_SIZE)
         # info = tf.fill([tf.shape(time_step.observation)[0]], self._global_step % MAX_BUFFER_SIZE)

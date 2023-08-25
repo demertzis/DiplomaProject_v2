@@ -10,12 +10,13 @@ from tf_agents.trajectories.policy_step import PolicyStep
 from tf_agents.trajectories.time_step import TimeStep
 from tf_agents.typing import types
 from tf_agents.agents import TFAgent, data_converter
+from tf_agents.typing.types import TensorSpec, SpecTensorOrArray
 from tf_agents.utils import nest_utils, common
 from tf_agents.utils.common import Checkpointer
 
 import config
 from app.models.tf_utils import my_round, my_round_16
-from app.models.tf_parking_9 import Parking
+from app.models.tf_parking_10 import Parking
 from app.utils import generate_vehicles, generate_vehicles_constant_shape
 
 from config import VEHICLE_BATTERY_CAPACITY, NUM_OF_ACTIONS
@@ -77,21 +78,21 @@ def create_single_agent(cls: type,
             #                                          shape=[buffer_max_size, 21],
             #                                          dtype=tf.float16,
             #                                          trainable=False)
-            self._private_observations = tf.Variable(tf.zeros([buffer_max_size, 21], dtype=tf.float32),
-                                                     shape=[buffer_max_size, 21],
-                                                     dtype=tf.float32,
-                                                     trainable=False,
-                                                     name=name + ': private observations')
-            self._private_actions = tf.Variable(tf.zeros([buffer_max_size], tf.int64),
-                                                shape=[buffer_max_size],
-                                                dtype=tf.int64,
-                                                trainable=False,
-                                                name=name + ': private actions')
-            self._private_index = tf.Variable(0,
-                                              dtype=tf.int64,
-                                              trainable=False,
-                                              name=name + ': private index')
-            self._buffer_max_size = buffer_max_size
+            # self._private_observations = tf.Variable(tf.zeros([buffer_max_size, 21], dtype=tf.float32),
+            #                                          shape=[buffer_max_size, 21],
+            #                                          dtype=tf.float32,
+            #                                          trainable=False,
+            #                                          name=name + ': private observations')
+            # self._private_actions = tf.Variable(tf.zeros([buffer_max_size], tf.int64),
+            #                                     shape=[buffer_max_size],
+            #                                     dtype=tf.int64,
+            #                                     trainable=False,
+            #                                     name=name + ': private actions')
+            # self._private_index = tf.Variable(0,
+            #                                   dtype=tf.int64,
+            #                                   trainable=False,
+            #                                   name=name + ': private index')
+            # self._buffer_max_size = buffer_max_size
             #TODO decide on weather it's needed
             #TODO remove avg vehicle list, there should not be access to global variables
 
@@ -103,37 +104,39 @@ def create_single_agent(cls: type,
                                            dtype=tf.int64,
                                            trainable=False,
                                            name=name + ': eval steps')
-            self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name=name + ': global step')
-            super(cls, self).__init__(*args, train_step_counter=self.global_step, **kwargs)
+            # self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name=name + ': global step')
+            # super(cls, self).__init__(*args, train_step_counter=self.global_step, **kwargs)
+            super(cls, self).__init__(*args, **kwargs)
             self._name = name
+            self._num_of_multi_agent_observation_elements = self.time_step_spec.observation.shape[0] - 21
             self.checkpointer = Checkpointer(
                 ckpt_dir='/'.join([ckpt_dir, self._name]),
                 max_to_keep=1,
-                policy=self.policy,
-                private_observations=self._private_observations,
-                private_actions=self._private_actions,
+                agent=self,
+                # policy=self.policy,
             )
-            self.policy.action = self._action_wrapper(self.policy.action, False)
-            self.collect_policy.action = self._action_wrapper(self.collect_policy.action, True)
+            # self.policy.action = self._action_wrapper(self.policy.action, False)
+            # self.collect_policy.action = self._action_wrapper(self.collect_policy.action, True)
 
-            buffer_time_step_spec = TimeStep(
-                    step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.int64, minimum=0, maximum=2),
-                    discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.float32, minimum=0.0, maximum=1.0),
-                    reward=tensor_spec.TensorSpec(shape=(num_of_agents,), dtype=np.float32),
-                    observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=np.float32, minimum=-1., maximum=1.),
-                )
-            buffer_info_spec = tensor_spec.TensorSpec(shape=(1,),
-                                                      dtype=tf.int64)
-            self._collect_data_context = data_converter.DataContext(
-                time_step_spec=buffer_time_step_spec,
-                action_spec=(),
-                info_spec=buffer_info_spec,
-            )
+            # buffer_time_step_spec = TimeStep(
+            #         step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.int64, minimum=0, maximum=2),
+            #         discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=np.float32, minimum=0.0, maximum=1.0),
+            #         reward=tensor_spec.TensorSpec(shape=(num_of_agents,), dtype=np.float32),
+            #         observation=tensor_spec.BoundedTensorSpec(shape=(13,), dtype=np.float32, minimum=-1., maximum=1.),
+            #     )
+            # buffer_info_spec = tensor_spec.TensorSpec(shape=(1,),
+            #                                           dtype=tf.int64)
+            # self._collect_data_context = data_converter.DataContext(
+            #     time_step_spec=buffer_time_step_spec,
+            #     action_spec=(),
+            #     info_spec=buffer_info_spec,
+            # )
 
         def checkpoint_save(self, global_step):
             self.checkpointer.save(global_step)
 
-        @tf.function
+        def reset_collect_steps(self):
+            self._collect_steps.assign(-1)
         def reset_eval_steps(self):
             self._eval_steps.assign(-1)
 
@@ -148,7 +151,6 @@ def create_single_agent(cls: type,
         @property
         def train_vehicles_generator(self):
             return self._generate_vehicles_train
-
         # @tf.function
         # def _add_new_cars(self, train_mode=True): # TODO decide on way to choose between distributions
         #     #print('Tracing add_new_cars')
@@ -206,116 +208,146 @@ def create_single_agent(cls: type,
             print('Tracing train')
             return super()._train(self.preprocess_sequence(experience), weights)
 
-        def _action_wrapper(self, action, collect=True):
-            """
-            Wraps the action method of a policy to allow it to consume
-            timesteps from the single buffer, augmenting the observation
-            with the saved garage state (or not if it's called during training)
-            """
+        def get_action(self, step: SpecTensorOrArray, augmented_obs: SpecTensorOrArray, parking_fields, collect = True):
+            # if collect:
+            #     indices_tensor = (tf.constant([[0]], tf.int64) + self._private_index) % self._buffer_max_size
+            #     self._private_index.assign_add(tf.constant(1, tf.int64))
+            #     self._private_observations.scatter_nd_update(indices_tensor, tf.expand_dims(augmented_obs[13:], axis=0))
+            #     self._private_actions.scatter_nd_update(indices_tensor, tf.expand_dims(step, axis=0))
+            load = self._get_load(step,
+                                  augmented_obs,
+                                  parking_fields,
+                                  collect)
+            return load
 
-            # @tf.function(jit_compile=True)
-            def wrapped_action_eval(time_step: TimeStep,
-                                    policy_state: types.NestedTensor = (),
-                                    seed: Optional[types.Seed] = None,) -> PolicyStep:
-                #print('Tracing wrapped_action_eval')
-                try:
-                    # time_step = nest_utils.prune_extra_keys(self.policy.time_step_spec, time_step)
-                    # policy_state = nest_utils.prune_extra_keys(self.policy.policy_state_spec,
-                    #                                            policy_state)
-                    # nest_utils.assert_same_structure(
-                    #     time_step,
-                    #     self.policy.time_step_spec,
-                    #     message='time_step and time_step_spec structures do not match')
-                    # return action(time_step,
-                    return action(time_step._replace(observation=tf.cast(time_step.observation, tf.float32)),
-                                  policy_state,
-                                  seed)
-                except (TypeError, ValueError):
-                    # if ~time_step.is_last():
-                    #     self._add_new_cars(False)
-                    #     self._eval_steps.assign_add(1)
-                    # self._eval_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
-                    #                                      tf.constant(0, tf.int64),
-                    #                                      tf.constant(1, tf.int64)))
-                    self._eval_steps.assign_add(tf.clip_by_value(tf.negative(time_step.step_type[0]) +\
-                                                                  tf.constant(2, tf.int64),
-                                                                 tf.constant(0, tf.int64),
-                                                                 tf.constant(1, tf.int64)))
-                    self._add_new_cars(False)
-                    # index = tf.where(tf.squeeze(time_step.is_last()), 0, 1)
-                    # self._eval_steps.assign_add(tf.cast(index, tf.int64))
-                    # def add_cars():
-                    #     self._add_new_cars(False)
-                    # tf.switch_case(index, [tf.no_op, add_cars])
-                    # tf.print(time_step.observation)
-                    parking_obs = self._get_parking_observation(False)
-                    augmented_obs = tf.concat((time_step.observation,
-                                               parking_obs),
-                                              axis=1)
-                    reward = time_step.reward[..., self._agent_id - 1]
-                    # new_time_step = time_step._replace(observation=augmented_obs,
-                    new_time_step = time_step._replace(observation=tf.cast(augmented_obs, tf.float32),
-                                                       reward=reward)
-                    step = action(new_time_step,
-                                  policy_state,
-                                  seed,)
-                    load = self._get_load(tf.squeeze(step.action),
-                                          tf.squeeze(augmented_obs),
-                                          False)
-                    # load = tf.expand_dims(load, axis=0)
-                    # load = tf.reshape(load, [1, -1])
-                    # return step.replace(action=tf.reshape(load, shape=[1]))
-                    # load = tf.reshape(load, [1, -1])
-                    return step.replace(action=load)
-
-            @tf.function(jit_compile=True)
-            def wrapped_action_collect(time_step: TimeStep,
-                                       policy_state: types.NestedTensor = (),
-                                       seed: Optional[types.Seed] = None,) -> PolicyStep:
-                #print('Tracing wrapped_action_collect')
-                # if ~time_step.is_last():
-                #     self._add_new_cars(True)
-                #     self._time_of_day.assign_add(1)
-                # else:
-                #     self._time_of_day.assign(0)
-                # self._collect_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
-                #                                tf.constant(0, tf.int64),
-                #                                tf.constant(1, tf.int64)))
-                self._collect_steps.assign_add(tf.clip_by_value(tf.negative(time_step.step_type[0]) +\
-                                                                 tf.constant(2, tf.int64),
+        def get_observation(self, observation: SpecTensorOrArray, step_type: SpecTensorOrArray, collect=True) -> SpecTensorOrArray:
+            """
+            Adds cars and returns the parking observation concatenated at the end of the environment observation.
+            Should be used exactly once per step in the environment.
+            """
+            if collect:
+                self._collect_steps.assign_add(tf.clip_by_value(tf.negative(step_type[0]) + \
+                                                                tf.constant(2, tf.int64),
                                                                 tf.constant(0, tf.int64),
                                                                 tf.constant(1, tf.int64)))
-                self._add_new_cars(True)
-                parking_obs = self._get_parking_observation(True)
-                augmented_obs = tf.concat((time_step.observation,
-                                           parking_obs),
-                                          axis=1)
-                reward = time_step.reward[..., self._agent_id - 1]
-                # new_time_step = time_step._replace(observation=augmented_obs,
-                new_time_step = time_step._replace(observation=tf.cast(augmented_obs, tf.float32),
-                                                   reward=reward)
-                step = action(new_time_step,
-                              policy_state,
-                              seed,)
-                time_step_batch_size = tf.shape(time_step.observation, out_type=tf.int64)[0]
-                # indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
-                #                              self._private_index) %
-                #                              self._buffer_max_size,
-                #                             [-1, 1])
-                indices_tensor = tf.expand_dims((tf.range(time_step_batch_size) + \
-                                                 self._private_index) % self._buffer_max_size,
-                                                axis=1)
-                self._private_index.assign_add(time_step_batch_size)
-                self._private_observations.scatter_nd_update(indices_tensor, parking_obs)
-                self._private_actions.scatter_nd_update(indices_tensor, step.action)
-                load = self._get_load(tf.squeeze(step.action),
-                                      tf.squeeze(augmented_obs),
-                                      True)
-                return step.replace(action=load)
-                # load = tf.reshape(load, [1, -1])
-                # return step.replace(action=load)
+            else:
+                self._eval_steps.assign_add(tf.clip_by_value(tf.negative(step_type[0]) + \
+                                                             tf.constant(2, tf.int64),
+                                                             tf.constant(0, tf.int64),
+                                                             tf.constant(1, tf.int64)))
+            self._add_new_cars(collect)
+            parking_obs, parking_fields = self._get_parking_observation(collect)
+            return tf.concat((observation, parking_obs), axis=0), parking_fields
 
-            return wrapped_action_collect if collect else wrapped_action_eval
+        # def _action_wrapper(self, action, collect=True):
+        #     """
+        #     Wraps the action method of a policy to allow it to consume
+        #     timesteps from the single buffer, augmenting the observation
+        #     with the saved garage state (or not if it's called during training)
+        #     """
+        #     # @tf.function(jit_compile=True)
+        #     def wrapped_action_eval(time_step: TimeStep,
+        #                             policy_state: types.NestedTensor = (),
+        #                             seed: Optional[types.Seed] = None,) -> PolicyStep:
+        #         #print('Tracing wrapped_action_eval')
+        #         try:
+        #             # time_step = nest_utils.prune_extra_keys(self.policy.time_step_spec, time_step)
+        #             # policy_state = nest_utils.prune_extra_keys(self.policy.policy_state_spec,
+        #             #                                            policy_state)
+        #             # nest_utils.assert_same_structure(
+        #             #     time_step,
+        #             #     self.policy.time_step_spec,
+        #             #     message='time_step and time_step_spec structures do not match')
+        #             # return action(time_step,
+        #             return action(time_step._replace(observation=tf.cast(time_step.observation, tf.float32)),
+        #                           policy_state,
+        #                           seed)
+        #         except (TypeError, ValueError):
+        #             # if ~time_step.is_last():
+        #             #     self._add_new_cars(False)
+        #             #     self._eval_steps.assign_add(1)
+        #             # self._eval_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
+        #             #                                      tf.constant(0, tf.int64),
+        #             #                                      tf.constant(1, tf.int64)))
+        #             self._eval_steps.assign_add(tf.clip_by_value(tf.negative(time_step.step_type[0]) +\
+        #                                                           tf.constant(2, tf.int64),
+        #                                                          tf.constant(0, tf.int64),
+        #                                                          tf.constant(1, tf.int64)))
+        #             self._add_new_cars(False)
+        #             # index = tf.where(tf.squeeze(time_step.is_last()), 0, 1)
+        #             # self._eval_steps.assign_add(tf.cast(index, tf.int64))
+        #             # def add_cars():
+        #             #     self._add_new_cars(False)
+        #             # tf.switch_case(index, [tf.no_op, add_cars])
+        #             # tf.print(time_step.observation)
+        #             parking_obs = tf.expand_dims(self._get_parking_observation(False), axis=0)
+        #             augmented_obs = tf.concat((time_step.observation,
+        #                                        parking_obs),
+        #                                       axis=1)
+        #             reward = time_step.reward[..., self._agent_id - 1]
+        #             # new_time_step = time_step._replace(observation=augmented_obs,
+        #             new_time_step = time_step._replace(observation=tf.cast(augmented_obs, tf.float32),
+        #                                                reward=reward)
+        #             step = action(new_time_step,
+        #                           policy_state,
+        #                           seed,)
+        #             load = self._get_load(tf.squeeze(step.action),
+        #                                   tf.squeeze(augmented_obs),
+        #                                   False)
+        #             # load = tf.expand_dims(load, axis=0)
+        #             # load = tf.reshape(load, [1, -1])
+        #             # return step.replace(action=tf.reshape(load, shape=[1]))
+        #             # load = tf.reshape(load, [1, -1])
+        #             return step.replace(action=load)
+        #
+        #     @tf.function(jit_compile=True)
+        #     def wrapped_action_collect(time_step: TimeStep,
+        #                                policy_state: types.NestedTensor = (),
+        #                                seed: Optional[types.Seed] = None,) -> PolicyStep:
+        #         #print('Tracing wrapped_action_collect')
+        #         # if ~time_step.is_last():
+        #         #     self._add_new_cars(True)
+        #         #     self._time_of_day.assign_add(1)
+        #         # else:
+        #         #     self._time_of_day.assign(0)
+        #         # self._collect_steps.assign_add(tf.where(tf.squeeze(time_step.is_last()),
+        #         #                                tf.constant(0, tf.int64),
+        #         #                                tf.constant(1, tf.int64)))
+        #         self._collect_steps.assign_add(tf.clip_by_value(tf.negative(time_step.step_type[0]) +\
+        #                                                          tf.constant(2, tf.int64),
+        #                                                         tf.constant(0, tf.int64),
+        #                                                         tf.constant(1, tf.int64)))
+        #         self._add_new_cars(True)
+        #         parking_obs = tf.expand_dims(self._get_parking_observation(True), axis=0)
+        #         augmented_obs = tf.concat((time_step.observation,
+        #                                    parking_obs),
+        #                                   axis=1)
+        #         reward = time_step.reward[..., self._agent_id - 1]
+        #         # new_time_step = time_step._replace(observation=augmented_obs,
+        #         new_time_step = time_step._replace(observation=tf.cast(augmented_obs, tf.float32),
+        #                                            reward=reward)
+        #         step = action(new_time_step,
+        #                       policy_state,
+        #                       seed,)
+        #         time_step_batch_size = tf.shape(time_step.observation, out_type=tf.int64)[0]
+        #         # indices_tensor = tf.reshape((tf.range(time_step_batch_size) +
+        #         #                              self._private_index) %
+        #         #                              self._buffer_max_size,
+        #         #                             [-1, 1])
+        #         indices_tensor = tf.expand_dims((tf.range(time_step_batch_size) + \
+        #                                          self._private_index) % self._buffer_max_size,
+        #                                         axis=1)
+        #         self._private_index.assign_add(time_step_batch_size)
+        #         self._private_observations.scatter_nd_update(indices_tensor, parking_obs)
+        #         self._private_actions.scatter_nd_update(indices_tensor, step.action)
+        #         load = self._get_load(tf.squeeze(step.action),
+        #                               tf.squeeze(augmented_obs),
+        #                               True)
+        #         return step.replace(action=load)
+        #         # load = tf.reshape(load, [1, -1])
+        #         # return step.replace(action=load)
+        #
+        #     return wrapped_action_collect if collect else wrapped_action_eval
 
         # @tf.function
         # @tf.function(jit_compile=config.USE_JIT)
@@ -421,58 +453,54 @@ def create_single_agent(cls: type,
             #                                                               temp_diff_sign * \
             #                                                               next_max_discharge * \
             #                                                               (-1.0)))
-            return tf.expand_dims(tf.stack([max_acceptable_coefficient,
-                                            threshold_coefficient,
-                                            tf.negative(min_acceptable_coefficient),
-                                            *tf.unstack(self._calculate_vehicle_distribution(train)),
-                                            next_max_charge / max_charging_rate / capacity,
-                                            next_min_charge / max_charging_rate / capacity,
-                                            next_max_discharge / max_discharging_rate / capacity,
-                                            next_min_discharge / max_discharging_rate / capacity,
-                                            parking.charge_mean_priority,
-                                            parking.discharge_mean_priority,],
-                                           axis=0),
-                                  axis=0)
+            return tf.stack([max_acceptable_coefficient,
+                                   threshold_coefficient,
+                                   tf.negative(min_acceptable_coefficient),
+                                   *tf.unstack(self._calculate_vehicle_distribution(train)),
+                                   next_max_charge / max_charging_rate / capacity,
+                                   next_min_charge / max_charging_rate / capacity,
+                                   next_max_discharge / max_discharging_rate / capacity,
+                                   next_min_discharge / max_discharging_rate / capacity,
+                                   parking.charge_mean_priority,
+                                   parking.discharge_mean_priority,],
+                            axis=0), parking
 
         @tf.function(jit_compile=True)
-        def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, collect_mode = True):
+        def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, parking_fields, collect_mode = True):
             #print('Tracing get_load')
-            parking = self._train_parking.return_fields() if collect_mode else self._eval_parking.return_fields()
+            parking = self._train_parking if collect_mode else self._eval_parking
+            # parking_fields = parking.return_fields()
             # observation = tf.cast(observation, tf.float16)
             length = tf.constant((self._num_of_actions - 1), dtype=tf.float32)
-            max_coefficient = observation[..., 13]
-            threshold_coefficient = observation[..., 14]
-            min_coefficient =observation[..., 15]
+            start = self._num_of_multi_agent_observation_elements
+            max_coefficient, threshold_coefficient, min_coefficient = tf.unstack(observation[..., start:start+3])
+            # max_coefficient = observation[..., 13]
+            # threshold_coefficient = observation[..., 14]
+            # min_coefficient =observation[..., 15]
             step = (max_coefficient - min_coefficient) / length
             charging_coefficient = tf.cast(action_step, dtype=tf.float32) * step + min_coefficient
             sign_coefficient = tf.sign(charging_coefficient)
-            # charging_coefficient = my_round(charging_coefficient, 4)
-            # charging_coefficient = charging_coefficient
-            # max_energy = tf.where(tf.less_equal(0.0, charging_coefficient),
-            #                       parking.next_max_charge,
-            #                       parking.next_max_discharge)
-            # new_energy = my_round(max_energy * charging_coefficient, 2)
-            # new_energy = max_energy * charging_coefficient
-            new_energy = tf.maximum(charging_coefficient * parking.next_max_charge,
-                                    tf.negative(charging_coefficient) * parking.next_max_discharge) * sign_coefficient
-            self._update_parking(collect_mode,
+            new_energy = tf.maximum(charging_coefficient * parking_fields.next_max_charge,
+                                    tf.negative(charging_coefficient) * parking_fields.next_max_discharge) * sign_coefficient
+            self._update_parking(parking,
+                                 parking_fields,
                                  new_energy,
                                  charging_coefficient,
-                                 # tf.cast(threshold_coefficient, tf.float32))
                                  threshold_coefficient)
             return new_energy
 
         @tf.function(jit_compile=True)
         def _update_parking(self,
-                            train,
+                            parking: Parking,
+                            parking_fields,
                             new_energy,
                             charging_coefficient,
                             threshold_coefficient):
             #print('Tracing update_parking')
-            parking = self._train_parking.return_fields() if train else self._eval_parking.return_fields()
-            available_energy = new_energy + parking.next_min_discharge - parking.next_min_charge
-            max_non_emergency_charge = parking.next_max_charge - parking.next_min_charge
-            max_non_emergency_discharge = parking.next_max_discharge - parking.next_min_discharge
+            # parking = self._train_parking.return_fields() if train else self._eval_parking.return_fields()
+            available_energy = new_energy + parking_fields.next_min_discharge - parking_fields.next_min_charge
+            max_non_emergency_charge = parking_fields.next_max_charge - parking_fields.next_min_charge
+            max_non_emergency_discharge = parking_fields.next_max_discharge - parking_fields.next_min_discharge
             is_charging = tf.math.sign(charging_coefficient - threshold_coefficient)
             update_coefficient = tf.clip_by_value(tf.math.sign(tf.math.abs(charging_coefficient - \
                                                                            threshold_coefficient) - \
@@ -485,10 +513,10 @@ def create_single_agent(cls: type,
                                                                        tf.math.negative(max_non_emergency_discharge) * \
                                                                        is_charging))
             # update_coefficient = my_round_16(update_coefficient, 2)
-            if train:
-                self._train_parking.update(update_coefficient)
-            else:
-                self._eval_parking.update(update_coefficient)
+            parking.update(update_coefficient,
+                           parking_fields.next_max_charge-parking_fields.next_min_charge,
+                           parking_fields.next_max_discharge-parking_fields.next_min_discharge,
+                           False)
 
         def wrap_external_policy_action(self, action, collect: bool):
             return self._action_wrapper(action, collect)

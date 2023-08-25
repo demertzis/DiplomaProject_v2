@@ -20,7 +20,7 @@ from app.utils import VehicleDistributionListConstantShape, calculate_avg_distri
 from app.abstract.tf_single_agent_5 import create_single_agent
 
 tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
-NUMBER_OF_AGENTS = 50
+NUMBER_OF_AGENTS = 6
 # tf.debugging.enable_check_numerics()
 
 
@@ -76,11 +76,11 @@ offset_q_net, offset_target_q_net = load_pretrained_model(model_dir)
 
 learning_rate = 3e-4
 # reward_function = rf.vanilla
-# reward_function = rf.punishing_uniform
+reward_function = rf.punishing_uniform
 # reward_function = rf.punishing_non_uniform_non_individually_rational
-reward_function = rf.punishing_non_uniform_individually_rational
+# reward_function = rf.punishing_non_uniform_individually_rational
 reward_name = reward_function.__name__
-
+reward_function_eval = rf.vanilla
 ckpt_dir = '/'.join(['checkpoints',
                      str(6) +
                      '_AGENTS',
@@ -138,19 +138,19 @@ for i in range(len(agent_list)):
     eval_avg_vehicle_list += vehicles.avg_vehicles_list if i % 3 != 2 else offset_vehicles.avg_vehicles_list
     # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
-energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
-energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
+    energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
+    energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
-train_env = TFPowerMarketEnv(energy_curve_train,
-                             reward_function,
-                             NUMBER_OF_AGENTS,
-                             [AVG_CHARGING_RATE * v for v in collect_avg_vehicles_list.numpy()],
-                             True)
-eval_env = TFPowerMarketEnv(energy_curve_eval,
-                            reward_function,
-                            NUMBER_OF_AGENTS,
-                            [AVG_CHARGING_RATE * v for v in eval_avg_vehicle_list.numpy()],
-                            False)
+    train_env = TFPowerMarketEnv(energy_curve_train,
+                                 reward_function_eval,
+                                 NUMBER_OF_AGENTS,
+                                 [AVG_CHARGING_RATE * v for v in collect_avg_vehicles_list.numpy()],
+                                 True)
+    eval_env = TFPowerMarketEnv(energy_curve_eval,
+                                reward_function_eval,
+                                NUMBER_OF_AGENTS,
+                                [AVG_CHARGING_RATE * v for v in eval_avg_vehicle_list.numpy()],
+                                False)
 
 multi_agent = MultipleAgents(train_env,
                              eval_env,

@@ -59,19 +59,12 @@ class Parking:
         parking_spaces (``ParkingSpace[]``) :
             description: An array containing all available parking spaces objects
     """
-    _next_max_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _next_min_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _next_max_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _next_min_discharge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _charge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _discharge_mean_priority = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    _current_charge = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    # _max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, tf.float32).numpy()
-    _max_charging_rate = float(cfg.MAX_CHARGING_RATE)
-    # _max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, tf.float32).numpy()
-    _max_discharging_rate = float(cfg.MAX_DISCHARGING_RATE)
-
     def __init__(self, capacity: int, name: str):
+        # self._max_charging_rate = tf.constant(cfg.MAX_CHARGING_RATE, tf.float32).numpy()
+        self._max_charging_rate = float(cfg.MAX_CHARGING_RATE)
+        # self._max_discharging_rate = tf.constant(cfg.MAX_DISCHARGING_RATE, tf.float32).numpy()
+        self._max_discharging_rate = float(cfg.MAX_DISCHARGING_RATE)
+
         self._capacity = tf.constant(capacity, tf.int64)
         self._capacity_int32 = capacity
         self._vehicles = tf.Variable(tf.zeros(shape=(capacity, 13), dtype=tf.float32), trainable=False)
@@ -85,118 +78,13 @@ class Parking:
         return self._vehicles.value()[:self._num_of_vehicles.value()]
 
     def return_fields(self):
-        return ParkingFields(self._next_max_charge,
-                             self._next_min_charge,
-                             self._next_max_discharge,
-                             self._next_min_discharge,
-                             self._charge_mean_priority,
-                             self._discharge_mean_priority,
-                             self._current_charge,
-                             self._max_charging_rate_32,
-                             self._max_discharging_rate_32)
-
-    def get_current_vehicles(self):
-        """
-        Get current amount of vehicles in parking
-        """
-        return len(self._vehicles)
-
-    def get_capacity(self):
-        """
-        Get capacity of parking
-
-        ### Returns
-            capacity (`int`): The total parking spaces
-        """
-        return self._capacity
-
-    def get_current_energy(self):
-        """
-        Get total energy stored in the parking
-
-        ### Returns:
-            float : The sum of all vehicles' current energy
-        """
-        return self._current_charge
-
-    def get_next_max_charge(self):
-        """
-        Get next cumulative maximum charge
-
-        ### Returns:
-            float : The sum of all vehicles next max charge
-        """
-        return self._next_max_charge
-
-    def get_next_min_charge(self):
-        """
-        Get next cumulative minimum charge
-
-        ### Returns:
-            float : The sum of all vehicles next min charge
-        """
-        return self._next_min_charge
-
-    def get_next_max_discharge(self):
-        """
-        Get next cumulative maximum discharge
-
-        ### Returns:
-            float : The sum of all vehicles next max discharge
-        """
-        return self._next_max_discharge
-
-    def get_next_min_discharge(self):
-        """
-        Get next cumulative minimum discharge
-
-        ### Returns:
-            float : The sum of all vehicles next min discharge
-        """
-        return self._next_min_discharge
-
-    def get_charge_mean_priority(self):
-        """
-        Get mean charge priority
-        ### Returns
-            float : The mean charge priority
-        """
-        return self._charge_mean_priority
-
-    def get_discharge_mean_priority(self):
-        """
-        Get mean discharge priority
-        ### Returns
-            float : The mean discharge priority
-        """
-        return self._discharge_mean_priority
-
-    def get_max_charging_rate(self):
-        """
-        Get max charging rate
-        ### Returns
-            float : The max charging rate
-        """
-        return self._max_charging_rate
-
-    def get_max_discharging_rate(self):
-        """
-        Get max discharging rate
-        ### Returns
-            float : The max discharging rate
-        """
-        return self._max_discharging_rate
-
+        return ParkingFields(*self._update_parking_state(self._vehicles))
     def assign_vehicles(self, vehicles: tf.Tensor):
         """
-        Assign vehicle to a parking space
+        Assign vehicles to the parking space
 
         ### Arguments:
-            vehicle (``Vehicle``) :
-                description: A non-parked instance of the vehicle class
-
-        ### Raises:
-            ParkingIsFull: The parking has no free spaces
+            A vehicles tensor of shape [capacity, 13]
         """
         # print('Tracing assign_vehicle')
         num_of_vehicles = self._num_of_vehicles.value()
@@ -209,14 +97,11 @@ class Parking:
         vehicles_added_final = rolled_vehicles * vehicles_added_mult
         self._num_of_vehicles.assign_add(tf.cast(tf.reduce_sum(tf.clip_by_value(vehicles_added_final[..., 2], 0.0, 1.0)),
                                                  tf.int64))
-        new_charges = tf.reduce_sum(vehicles_added_final[..., 0])
-        self._current_charge.assign_add(new_charges)
         parked_tensor = Vehicle.park(vehicles_added_final,
                                      self._max_charging_rate,
                                      self._max_discharging_rate,
                                      self._capacity_int32)
         self._vehicles.assign_add(parked_tensor)
-        self._update_parking_state(self._vehicles)
 
     # @tf.function
     def _update_parking_state(self, vehicles):
@@ -228,16 +113,17 @@ class Parking:
         charges_sum = tf.reduce_sum(charges, axis=0)
         priorities_sum = tf.reduce_sum(priorities, axis=0)
         priorities_mean = tf.math.divide_no_nan(priorities_sum, num_of_vehicles)
-        self._current_charge.assign(tf.reduce_sum(current_charges))
-        self._next_max_charge.assign(charges_sum[0])
-        self._next_min_charge.assign(charges_sum[1])
-        self._next_max_discharge.assign(charges_sum[2])
-        self._next_min_discharge.assign(charges_sum[3])
-        self._charge_mean_priority.assign(priorities_mean[0])
-        self._discharge_mean_priority.assign(priorities_mean[1])
-
+        return [charges_sum[0],
+                charges_sum[1],
+                charges_sum[2],
+                charges_sum[3],
+                priorities_mean[0],
+                priorities_mean[1],
+                tf.reduce_sum(current_charges),
+                self._max_charging_rate_32,
+                self._max_discharging_rate]
     @tf.function(jit_compile=True)
-    def update(self, charging_coefficient):
+    def update(self, charging_coefficient, new_next_max_charge, new_next_max_discharge, compute_charges = True):
         """
         Given the action input, it performs an update step
 
@@ -246,16 +132,15 @@ class Parking:
                 description: The charging coefficient
         """
         #print('Tracing update (parking)')
-        new_next_max_charge = self._next_max_charge - self._next_min_charge
-        new_next_max_discharge = self._next_max_discharge - self._next_min_discharge
+        if compute_charges:
+            fields = self.return_fields()
+            new_next_max_charge = fields.next_max_charge - fields.next_min_charge
+            new_next_max_discharge = fields.next_max_discharge - fields.next_min_discharge
         staying_vehicles = _update(self._vehicles,
                                    charging_coefficient,
                                    self._capacity_int32,
                                    new_next_max_charge,
                                    new_next_max_discharge)
-        self._next_max_charge.assign(new_next_max_charge)
-        self._next_max_discharge.assign(new_next_max_discharge)
-        self._update_parking_state(staying_vehicles)
         self._num_of_vehicles.assign(tf.cast(tf.reduce_sum(tf.clip_by_value(staying_vehicles[..., 2], 0.0, 1.0)),
                                              tf.int64))
         self._vehicles.assign(staying_vehicles)
