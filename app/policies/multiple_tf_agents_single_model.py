@@ -19,7 +19,7 @@ from app.abstract.multi_dqn import MultiDdqnAgent
 from app.abstract.utils import MyNetwork, my_discounted_return, my_index_with_actions, my_to_n_step_transition, \
     MyTFDriver
 from config import MAX_BUFFER_SIZE
-from tf_agents.trajectories import time_step as ts, TimeStep
+from tf_agents.trajectories import time_step as ts, TimeStep, PolicyStep
 from tf_agents.trajectories.trajectory import Trajectory
 from tf_agents.trajectories import policy_step
 from tf_agents.typing import types
@@ -59,7 +59,9 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                                                                 [self._num_of_agents] + \
                                                                 self._agent_list[0].time_step_spec.observation.shape,
                                                           dtype=self.collect_data_spec.observation.dtype))
-            self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
+            # self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
+            #                                          dtype=last_action_dtype))
+            self._last_action = tf.Variable(tf.zeros(shape=[1, self._num_of_agents],
                                                      dtype=last_action_dtype))
 
     def get_last_trajectory(self, trajectory: Trajectory):
@@ -93,73 +95,6 @@ class MultiAgentSingleModelPolicy(TFPolicy):
             self._last_action.assign(single_model_action_vector.action)
         batched_action = tf.expand_dims(stacked_agent_action, axis=0)
         return policy_step.PolicyStep(action=batched_action, state=(), info=())
-
-class MultiAgentPolicyWrapper(TFPolicy):
-    def __init__(self,
-                 policy_list: List[TFPolicy],
-                 time_step_spec,
-                 action_spec,
-                 policy_state_spec,
-                 info_spec,
-                 global_step: tf.Tensor = tf.constant(0),
-                 collect = True
-                 ):
-        # if len(set([policy.time_step_spec for policy in policy_list])) > 1:
-        #     raise Exception('Single Agent policies have not a common time step spec')
-        # if len(set([policy.action_spec for policy in policy_list])) > 1:
-        #     raise Exception('Single Agent policies have not a common action step spec')
-        # if len(set([policy.policy_state_spec for policy in policy_list])) > 1 or policy_list[0].policy_state_spec:
-        #     raise NotImplementedError('Stateful multi-agent policies has not been implemented yet')
-        # if len(set([policy.info_spec for policy in policy_list])) > 1 or policy_list[0].info_spec:
-        #     raise Exception('Single Agent policies must not provide info')
-        super(MultiAgentPolicyWrapper, self).__init__(
-            time_step_spec,
-            action_spec,
-            policy_state_spec,
-            info_spec=info_spec or tensor_spec.TensorSpec(shape=(1,), dtype=tf.int64),
-        )
-        self._policy_list = policy_list
-        self._global_step = tf.Variable(global_step, dtype=tf.int64, trainable=False, name='policy global step')
-        self._collect = collect
-        self._num_of_agents = len(policy_list)
-        self._time_step_int_tensor = tf.Variable(0,
-                                                 dtype=tf.int64,
-                                                 trainable=False)
-        self._agent_id_tensor = tf.range(self._num_of_agents,
-                                         dtype=tf.int32) #has to be int32 because of switch_case
-        self.action = tf.function(self.action, jit_compile=config.USE_JIT)
-        self.gpu_split = len(tf.config.list_logical_devices('GPU')) + 1 == self._num_of_agents
-    @property
-    def global_step(self):
-        return self._global_step.value()
-    @property
-    def wrapped_policy_list(self) -> List[TFPolicy]:
-        return self._policy_list
-
-    # @tf.function(jit_compile=True)
-    def _action(self, time_step: ts.TimeStep,
-                      policy_state: types.NestedTensor,
-                      seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
-        #print('Tracing _action')
-        # policy_action_list = [lambda: policy.action(time_step) for policy in self._policy_list]
-        # action_tensor = tf.map_fn(lambda id: tf.switch_case(id,
-        #                                                     policy_action_list).action,
-        #                           self._agent_id_tensor,
-        #                           fn_output_signature=tf.float32,
-        #                           parallel_iterations=self._num_of_agents)
-        action_list = [0.0 for _ in range(self._num_of_agents)]
-        for i in range(self._num_of_agents):
-            with tf.device(f'GPU{i}' if self.gpu_split else 'CPU:0'):
-                action_list[i] = self._policy_list[i].action(time_step).action
-        with tf.device(f'GPU{self._num_of_agents}' if self.gpu_split else 'CPU:0'):
-            action_tensor = tf.stack(action_list, axis=0)
-            # action_tensor = tf.parallel_stack(action_list)
-
-            info = tf.fill([tf.shape(time_step.observation)[0], 1], self._global_step % MAX_BUFFER_SIZE)
-            # info = tf.fill([tf.shape(time_step.observation)[0]], self._global_step % MAX_BUFFER_SIZE)
-            if self._collect:
-                self._global_step.assign_add(1)
-            return policy_step.PolicyStep(action=tf.expand_dims(action_tensor, axis=0), state=(), info=info)
 
 def create_single_model(network_list: List[Sequential], add_activation_layer = False):
     with tf.name_scope('SingleFunctionalModel'):
@@ -302,11 +237,11 @@ class MultipleAgents(tf.Module):
             # 'action_spec': agents_list[0].action_spec,
             'q_network': single_model_q_network,
             'target_q_network': single_model_target_q_network,
-            'optimizer': tf.keras.optimizers.Adam(learning_rate=3e-4),
+            'optimizer': tf.keras.optimizers.Adam(learning_rate=1e-3),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
-            # 'epsilon_greedy': 0.2,
-            'epsilon_greedy': None,
-            'boltzmann_temperature': 0.8,
+            'epsilon_greedy': 0.05,
+            # 'epsilon_greedy': None,
+            # 'boltzmann_temperature': 0.8,
             'target_update_tau': 0.2,
             'target_update_period': 1000,
         }
@@ -465,22 +400,26 @@ class MultipleAgents(tf.Module):
                     agent.checkpoint_save(train_counter)
         self.checkpoint.save(self._multi_dqn_agent.train_step_counter)
 
+    # def create_single_agent_policy(self, policy_list):
+    #     if len(policy_list) != self._number_of_agents:
+    #         raise Exception("There should be provided a list of policies with length equal to the number of agents")
+    #     def new_action(timestep: TimeStep, policy_state = (), seed: Optional[types.Seed] = None) -> PolicyStep:
+    #
+    #     return TFPolicy()
 
-
-    def wrap_policy(self, policy_list: list, collect: bool):
-        if len(policy_list) != self._number_of_agents:
-           raise Exception('Policies List should be a list of size equal to the number of agents, and have different,'
-                           'policy objects')
-        for i, policy in enumerate(policy_list):
-            policy.action = self._agent_list[i].wrap_external_policy_action(policy.action, collect)
+    def wrap_policy(self, policy: TFPolicy, collect: bool):
+        # if len(policy_list) != self._number_of_agents:
+        #    raise Exception('Policies List should be a list of size equal to the number of agents, and have different,'
+        #                    'policy objects')
         env = self.train_env if collect else self.eval_env
-        return MultiAgentPolicyWrapper(policy_list,
-                                       env.time_step_spec(),
-                                       env.action_spec(),
-                                       (),
-                                       tensor_spec.TensorSpec((1,), tf.int64),
-                                       self.global_step.value(),
-                                       collect)
+        return MultiAgentSingleModelPolicy(policy,
+                                           self._agent_list,
+                                           env.time_step_spec(),
+                                           env.action_spec(),
+                                           (),
+                                           (),
+                                           tf.int64,
+                                           collect)
 
     # @tf.function
     def eval_policy(self, policy_list: Optional[List] = None):
@@ -493,7 +432,7 @@ class MultipleAgents(tf.Module):
             self._eval_driver.run(self.eval_env.reset())
             return self._metric.result()
         else:
-            policy = self.wrap_policy(policy_list, False)
+            policy = self.wrap_policy(policy_list[0], False)
             driver = TFDriver(self.eval_env,
                               policy,
                               [self._metric],

@@ -225,8 +225,8 @@ def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int):
     #                               probs_stacked,
     #                               tf.reverse(probs_stacked, [0]))
     mask = tf.cast(tf.less(0, intersection_gather_index[..., :1]), tf.float32)
-    final_probs_update = mask * probs_stacked + (tf.ones_like(mask) - mask) * tf.reverse(probs_stacked, [0])
-    return tf.concat((vehicles[..., :5], final_probs_update, vehicles[..., 7:]), axis=1)
+    final_probs_update = mask * probs_stacked + (tf.ones_like(mask) - mask) * tf.reverse(probs_stacked, [1])
+    return tf.concat((vehicles[..., :5], final_probs_update , vehicles[..., 7:]), axis=1)
 
 # @tf.function
 def update(vehicle: tf.Tensor, num_of_vehicles: int):

@@ -13,9 +13,9 @@ import app.policies.tf_reward_functions as rf
 import config
 
 from app.models.tf_energy_3 import EnergyCurve
-from app.policies.multiple_tf_agents_single_model import MultipleAgents
+from app.policies.multiple_tf_agents_single_model import MultipleAgents, MultiAgentSingleModelPolicy
 from app.policies.tf_dummy_v2g import DummyV2G
-from app.policies.tf_smart_charger import SmartCharger
+from app.policies.tf_smarter_charger import SmartCharger
 # from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
 from config import MAX_BUFFER_SIZE, AVG_CHARGING_RATE
 
@@ -23,7 +23,7 @@ from app.models.tf_pwr_env_5 import TFPowerMarketEnv
 
 from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
 from app.abstract.tf_single_agent_single_model import create_single_agent
-from data_creation_2 import create_train_data
+# from data_creation_3 import create_train_data
 
 tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
 try:
@@ -60,7 +60,7 @@ num_actions = 8
 single_agent_action_spec = tensor_spec.BoundedTensorSpec(
             shape=(), dtype=tf.int64, minimum=0, maximum=num_actions-1, name="action")
 
-model_dir = 'pretrained_networks/model_output_8.keras'
+model_dir = 'pretrained_networks/model_output_8_35.keras'
 # model_dir = 'pretrained_networks/new_models/model_output_8_agent2.keras'
 offset_model_dir = 'pretrained_networks/model_output_8_offset.keras'
 
@@ -104,8 +104,8 @@ def load_pretrained_model(model_dir):
     # return q_net, target_q_net
     return q_net
 
-# q_net = load_pretrained_model(model_dir)
-q_net = sequential.Sequential(layers_list)
+q_net = load_pretrained_model(model_dir)
+# q_net = sequential.Sequential(layers_list)
 # q_net.build(input_shape=(1,35))
 # offset_q_net = load_pretrained_model(offset_model_dir)
 offset_q_net = sequential.Sequential(layers_list)
@@ -194,7 +194,7 @@ for i in range(NUMBER_OF_AGENTS):
                                               capacity_train_garage=100,
                                               capacity_eval_garage=100,
                                               name='Agent-' + str(i+1),
-                                              num_of_agents=NUMBER_OF_AGENTS,
+                                              # num_of_agents=NUMBER_OF_AGENTS,
                                               # coefficient_function=offset_coefficient_function,
                                               coefficient_function=coefficient_function if not offset else offset_coefficient_function,
                                               **kwargs))
@@ -267,7 +267,14 @@ multi_agent = MultipleAgents(train_env,
 #     print(var.device, var.name)
 
 # data = create_train_data(agent_list[0],
-#                          multi_agent.wrap_policy(SmartCharger(0.5, num_actions, single_agent_time_step_spec), True),
+#                          MultiAgentSingleModelPolicy(SmartCharger(0.4, num_actions, single_agent_time_step_spec),
+#                                                      [agent_list[0]],
+#                                                      train_env.time_step_spec(),
+#                                                      train_env.action_spec(),
+#                                                      (),
+#                                                      (),
+#                                                      tf.int64,
+#                                                      True),
 #                          train_env,
 #                          5)
 if config.USE_JIT:
@@ -277,15 +284,15 @@ if config.USE_JIT:
 else:
     return_list = []
     # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
-    # eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in agent_list]
-    # for i in range(5, 101, 5):
-    #     i /= 100
-    #     for policy in eval_policy:
-    #         policy.threshold = i
-    #     return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
-    # print(return_list)
-    # print(multi_agent.eval_policy())
-    # input("Press Enter to continue...")
+    eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in agent_list]
+    for i in [1] + list(range(5, 101, 5)):
+        i /= 100
+        for policy in eval_policy:
+            policy.threshold = i
+        return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
+    print(return_list)
+    print(multi_agent.eval_policy())
+    input("Press Enter to continue...")
     st = time()
     multi_agent.train()
     print('Expired time: {}'.format(time() - st))

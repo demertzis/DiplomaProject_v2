@@ -24,7 +24,7 @@ from config import VEHICLE_BATTERY_CAPACITY, NUM_OF_ACTIONS
 def create_single_agent(cls: type,
                         vehicle_distribution: List,
                         name: str,
-                        num_of_agents: int,
+                        # num_of_agents: int,
                         ckpt_dir: str,
                         buffer_max_size: int,
                         num_of_actions: int = NUM_OF_ACTIONS,
@@ -454,15 +454,15 @@ def create_single_agent(cls: type,
             #                                                               next_max_discharge * \
             #                                                               (-1.0)))
             return tf.stack([max_acceptable_coefficient,
-                                   threshold_coefficient,
-                                   tf.negative(min_acceptable_coefficient),
-                                   *tf.unstack(self._calculate_vehicle_distribution(train)),
-                                   next_max_charge / max_charging_rate / capacity,
-                                   next_min_charge / max_charging_rate / capacity,
-                                   next_max_discharge / max_discharging_rate / capacity,
-                                   next_min_discharge / max_discharging_rate / capacity,
-                                   parking.charge_mean_priority,
-                                   parking.discharge_mean_priority,],
+                             threshold_coefficient,
+                             tf.negative(min_acceptable_coefficient),
+                             *tf.unstack(self._calculate_vehicle_distribution(train)),
+                             next_max_charge / max_charging_rate / capacity,
+                             next_min_charge / max_charging_rate / capacity,
+                             next_max_discharge / max_discharging_rate / capacity,
+                             next_min_discharge / max_discharging_rate / capacity,
+                             parking.charge_mean_priority,
+                             parking.discharge_mean_priority,],
                             axis=0), parking
 
         @tf.function(jit_compile=True)

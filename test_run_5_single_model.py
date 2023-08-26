@@ -25,7 +25,7 @@ from app.utils import VehicleDistributionListConstantShape, calculate_avg_distri
 from app.abstract.tf_single_agent_single_model import create_single_agent
 from data_creation_2 import create_train_data
 
-tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
+tf.config.run_functions_eagerly(not config.EAGER_EXECUTION)
 try:
     argument_num_of_agents = int(sys.argv[1])
 except:
