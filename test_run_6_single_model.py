@@ -41,7 +41,15 @@ try:
 except:
     reward_function = reward_function_array[0]
 
-print("Train run: {} agents, reward function = {}".format(NUMBER_OF_AGENTS, reward_function.__name__))
+try:
+    if NUMBER_OF_AGENTS == 1:
+        single_agent_offset = bool(int(sys.argv[3]))
+except:
+    single_agent_offset = False
+
+print("Train run: {} agents, reward function = {}, single agent offset = {}".format(NUMBER_OF_AGENTS,
+                                                                                    reward_function.__name__,
+                                                                                    single_agent_offset))
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 with open('data/vehicles_constant_shape.json') as file:
@@ -62,7 +70,7 @@ single_agent_action_spec = tensor_spec.BoundedTensorSpec(
 
 model_dir = 'pretrained_networks/model_output_8_35.keras'
 # model_dir = 'pretrained_networks/new_models/model_output_8_agent2.keras'
-offset_model_dir = 'pretrained_networks/model_output_8_offset.keras'
+offset_model_dir = 'pretrained_networks/model_output_8_35_offset.keras'
 
 layers_list = \
     [
@@ -107,8 +115,8 @@ def load_pretrained_model(model_dir):
 q_net = load_pretrained_model(model_dir)
 # q_net = sequential.Sequential(layers_list)
 # q_net.build(input_shape=(1,35))
-# offset_q_net = load_pretrained_model(offset_model_dir)
-offset_q_net = sequential.Sequential(layers_list)
+offset_q_net = load_pretrained_model(offset_model_dir)
+# offset_q_net = sequential.Sequential(layers_list)
 # offset_q_net.build(input_shape=(1,35))
 
 
@@ -136,11 +144,12 @@ ckpt_dir = '/'.join(['checkpoints_2',
                      str(NUMBER_OF_AGENTS) +
                      '_AGENTS',
                      reward_name])
-
+if single_agent_offset:
+    ckpt_dir += '_OFFSET'
 coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5
 offset_coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * (x + 3.0)) / 2.0 + 0.5
 agent_list = []
-offset = False
+# offset = False
 
 gpus = tf.config.list_physical_devices('GPU')
 successful_gpu_division = False
@@ -157,13 +166,14 @@ if gpus:
     # Virtual devices must be set before GPUs have been initialized
     print(e)
   successful_gpu_division = True
-
 for i in range(NUMBER_OF_AGENTS):
     with tf.device(f'GPU:{i}' if successful_gpu_division else 'CPU:0'):
         if i % 3 == 2:
             offset = True
         else:
             offset = False
+        if NUMBER_OF_AGENTS == 1:
+            offset = single_agent_offset
         new_q_net = (offset_q_net if offset else q_net).copy(name='Agent_{}_QNetwork'.format(i))
         new_target_q_net = (offset_q_net if offset else q_net).copy(name='Agent_{}_TargetQNetwork'.format(i))
         kwargs = {
@@ -179,7 +189,7 @@ for i in range(NUMBER_OF_AGENTS):
             #                                                                                   amsgrad=True),),
             'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
-            # 'epsilon_greedy': 0.2,
+            # 'epsilon_greedy': 0.2,single_agent_offset
             'epsilon_greedy': None,
             'boltzmann_temperature': 0.9,
             'target_update_tau': 0.1,
@@ -207,8 +217,11 @@ for agent in agent_list:
 # collect_avg_vehicles_list = collect_avg_vehicles_list.numpy()
 
 eval_avg_vehicle_list = tf.constant([0.0] * 24)
-for i in range(len(agent_list)):
-    eval_avg_vehicle_list += vehicles.avg_vehicles_list if i % 3 != 2 else offset_vehicles.avg_vehicles_list
+if len(agent_list) == 1:
+    eval_avg_vehicle_list += vehicles.avg_vehicles_list if not single_agent_offset else offset_vehicles.avg_vehicles_list
+else:
+    for i in range(len(agent_list)):
+        eval_avg_vehicle_list += vehicles.avg_vehicles_list if i % 3 != 2 else offset_vehicles.avg_vehicles_list
     # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
 with tf.device(f'GPU:{NUMBER_OF_AGENTS}' if successful_gpu_division else 'CPU:0'):
@@ -216,14 +229,14 @@ with tf.device(f'GPU:{NUMBER_OF_AGENTS}' if successful_gpu_division else 'CPU:0'
     energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
     spec = single_agent_time_step_spec
-    env_time_step_spec = TimeStep(step_type=tensor_spec.add_outer_dim(spec.step_type, 1),
-                                  discount=tensor_spec.add_outer_dim(spec.discount, 1),
-                                  reward=tensor_spec.add_outer_dim(spec.reward, NUMBER_OF_AGENTS),
-                                  observation=tensor_spec.BoundedTensorSpec(shape=(13,),
-                                                                            dtype=tf.float32,
-                                                                            minimum=-1.,
-                                                                            maximum=1.))
-    env_action_spec = tensor_spec.TensorSpec(shape=(NUMBER_OF_AGENTS,), dtype=tf.float32, name="action")
+    # env_time_step_spec = TimeStep(step_type=tensor_spec.add_outer_dim(spec.step_type, 1),
+    #                               discount=tensor_spec.add_outer_dim(spec.discount, 1),
+    #                               reward=tensor_spec.add_outer_dim(spec.reward, NUMBER_OF_AGENTS),
+    #                               observation=tensor_spec.BoundedTensorSpec(shape=(13,),
+    #                                                                         dtype=tf.float32,
+    #                                                                         minimum=-1.,
+    #                                                                         maximum=1.))
+    # env_action_spec = tensor_spec.TensorSpec(shape=(NUMBER_OF_AGENTS,), dtype=tf.float32, name="action")
     train_env = TFPowerMarketEnv(spec,
                                  # env_action_spec,
                                  energy_curve_train,
@@ -292,7 +305,7 @@ else:
         return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
     print(return_list)
     print(multi_agent.eval_policy())
-    input("Press Enter to continue...")
+    # input("Press Enter to continue...")
     st = time()
     multi_agent.train()
     print('Expired time: {}'.format(time() - st))

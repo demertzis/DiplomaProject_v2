@@ -25,10 +25,15 @@ junk_test_utils.py
 #checkpoints
 /checkoints_legacy/*
 /best_checkpoints/*
+/best_checkpoints_2
+/temp_checkpoints_2
+/temp_checkpoint_eval
 /new_checkpoints/*
+/checkpoints/*
+/checkpoints_2
 
 #data for pretraining networks(probably deprecated since I have changed the network inputs order)
-/pretrained_networks
+
 /colab_data_with_decay_2_dummy.csv
 /colab_data_without_decay.csv
 /new_checkpoints/

@@ -15,6 +15,7 @@ from tf_agents.utils import nest_utils, common
 from tf_agents.utils.common import Checkpointer
 
 import config
+from app.abstract.utils import MyCheckpointer
 from app.models.tf_utils import my_round, my_round_16
 from app.models.tf_parking_10 import Parking
 from app.utils import generate_vehicles, generate_vehicles_constant_shape
@@ -115,6 +116,12 @@ def create_single_agent(cls: type,
                 agent=self,
                 # policy=self.policy,
             )
+            self.best_checkpointer = MyCheckpointer(
+                ckpt_dir='/'.join(['best_' + ckpt_dir, self._name]),
+                max_to_keep=1,
+                policy=self.policy,
+                # policy=self.policy,
+            )
             # self.policy.action = self._action_wrapper(self.policy.action, False)
             # self.collect_policy.action = self._action_wrapper(self.collect_policy.action, True)
 
@@ -132,8 +139,11 @@ def create_single_agent(cls: type,
             #     info_spec=buffer_info_spec,
             # )
 
-        def checkpoint_save(self, global_step):
-            self.checkpointer.save(global_step)
+        def checkpoint_save(self, global_step, best=False):
+            if best:
+                self.best_checkpointer.save(global_step)
+            else:
+                self.checkpointer.save(global_step)
 
         def reset_collect_steps(self):
             self._collect_steps.assign(-1)

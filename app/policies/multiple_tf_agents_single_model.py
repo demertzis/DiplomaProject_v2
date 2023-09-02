@@ -17,7 +17,7 @@ from tf_agents.utils import value_ops
 import config
 from app.abstract.multi_dqn import MultiDdqnAgent
 from app.abstract.utils import MyNetwork, my_discounted_return, my_index_with_actions, my_to_n_step_transition, \
-    MyTFDriver
+    MyCheckpointer, __call__
 from config import MAX_BUFFER_SIZE
 from tf_agents.trajectories import time_step as ts, TimeStep, PolicyStep
 from tf_agents.trajectories.trajectory import Trajectory
@@ -237,13 +237,13 @@ class MultipleAgents(tf.Module):
             # 'action_spec': agents_list[0].action_spec,
             'q_network': single_model_q_network,
             'target_q_network': single_model_target_q_network,
-            'optimizer': tf.keras.optimizers.Adam(learning_rate=1e-3),
+            'optimizer': tf.keras.optimizers.Adam(learning_rate=1e-4),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
-            'epsilon_greedy': 0.05,
-            # 'epsilon_greedy': None,
-            # 'boltzmann_temperature': 0.8,
-            'target_update_tau': 0.2,
-            'target_update_period': 1000,
+            # 'epsilon_greedy': 0.1,
+            'epsilon_greedy': None,
+            'boltzmann_temperature': 0.4,
+            'target_update_tau': 0.1,
+            'target_update_period': 2400,
         }
         self._multi_dqn_agent = MultiDdqnAgent(**kwargs)
 
@@ -268,7 +268,19 @@ class MultipleAgents(tf.Module):
                                                   (),
                                                   tf.int64,
                                                   False)
-
+        # saver = tf_agents.policies.PolicySaver(self.policy, batch_size=self.eval_env.batch_size)
+        # Network.__call__ = __call__
+        # saver.save("saved_policies")
+        self.best_checkpoint = MyCheckpointer(
+            ckpt_dir='best_' + ckpt_dir,
+            max_to_keep=1,
+            policy=self.policy
+        )
+        self.temp_checkpoint = MyCheckpointer(
+            ckpt_dir='temp_' + ckpt_dir,
+            max_to_keep=1,
+            policy=self.policy
+        )
         self._initial_policy = self.wrap_policy(initial_collect_policy, True) if initial_collect_policy else None
 
         steps = self.num_eval_episodes * 24
@@ -280,7 +292,6 @@ class MultipleAgents(tf.Module):
                                      max_episodes=self.num_eval_episodes,
                                      disable_tf_function=False)
         # self._eval_driver.run = tf.function(self._eval_driver.run, jit_compile=True)
-
 
 
     @property
@@ -305,8 +316,10 @@ class MultipleAgents(tf.Module):
 
     def train(self):
         if not config.USE_JIT:
-            best_avg_return = self.eval_policy()
-            print(best_avg_return)
+            print('Latest trained policy evaluation: {}'.format(self.eval_policy().numpy()))
+            best_avg_return = self.eval_policy(best=True)
+            print('Best policy evaluation: {}'.format(best_avg_return))
+            input('Press Enter to continue...')
         dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3,
             sample_batch_size=self.batch_size,
@@ -389,16 +402,20 @@ class MultipleAgents(tf.Module):
                     # self.global_step.assign(self.collect_policy.global_step)
                     # self.checkpoint.save(self.global_step)
                     train_counter = self._multi_dqn_agent.train_step_counter
-                    self.checkpoint.save(train_counter)
-                    for agent in self._agent_list:
-                        agent.checkpoint_save(train_counter)
+                    # self.checkpoint.save(train_counter)
+                    self.best_checkpoint.save(train_counter)
+                    # for agent in self._agent_list:
+                    #     agent.checkpoint_save(train_counter, True)
             elif i % 100 == 0:
                 # self.global_step.assign(self.collect_policy.global_step)
                 train_counter = self._multi_dqn_agent.train_step_counter
                 self.checkpoint.save(train_counter)
                 for agent in self._agent_list:
                     agent.checkpoint_save(train_counter)
-        self.checkpoint.save(self._multi_dqn_agent.train_step_counter)
+        train_counter = self._multi_dqn_agent.train_step_counter
+        self.checkpoint.save(train_counter)
+        for agent in self._agent_list:
+            agent.checkpoint_save(train_counter)
 
     # def create_single_agent_policy(self, policy_list):
     #     if len(policy_list) != self._number_of_agents:
@@ -422,14 +439,23 @@ class MultipleAgents(tf.Module):
                                            collect)
 
     # @tf.function
-    def eval_policy(self, policy_list: Optional[List] = None):
+    def eval_policy(self, policy_list: Optional[List] = None, best=False):
         #print('Tracing eval_policy')
+        if policy_list and best:
+            raise Exception('Can only evaluate either a policy list or a saved policy not both')
+        if best:
+            self.temp_checkpoint.save(global_step=tf.constant(0, tf.int64))
+            self.best_checkpoint.initialize_or_restore()
+            if self.best_checkpoint.checkpoint_exists:
+                print('Found Best Policy. Continuing from there...')
         self._metric.reset()
         for agent in self._agent_list:
             agent.reset_eval_steps()
         self.eval_env.hard_reset()
         if policy_list is None:
             self._eval_driver.run(self.eval_env.reset())
+            if best:
+                self.temp_checkpoint.initialize_or_restore()
             return self._metric.result()
         else:
             policy = self.wrap_policy(policy_list[0], False)
@@ -442,6 +468,7 @@ class MultipleAgents(tf.Module):
             time_step = self.eval_env.reset()
             driver.run(time_step)
             return self._metric.result()
+
 
 
 

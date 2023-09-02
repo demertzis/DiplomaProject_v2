@@ -2,12 +2,13 @@ import logging
 from typing import Sequence, Callable, Any, Optional, Tuple
 
 import numpy as np
+from tensorflow.python.util.tf_inspect import getfullargspec, ArgSpec, FullArgSpec
 from tf_agents.drivers import driver
 from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
 from tf_agents.environments import tf_environment
 from tf_agents.environments.py_environment import PyEnvironment
 import tensorflow as tf
-from tf_agents.networks import network
+from tf_agents.networks import network, Network
 from tensorflow.python.distribute import distribution_strategy_context as ds
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
@@ -17,11 +18,11 @@ from tf_agents.policies import tf_policy
 from tf_agents.trajectories import Trajectory, Transition, policy_step, trajectory
 from tf_agents.trajectories.trajectory import _validate_rank
 from tf_agents.typing import types
-from tf_agents.utils import composite, common
+from tf_agents.utils import composite, common, nest_utils
 import tf_agents.trajectories.time_step as ts
 from tf_agents.utils.common import Checkpointer, AggregatedLosses
-
-
+from tensorflow.python import util as tf_util  # TF internal
+tf_inspect = tf_util.tf_inspect
 class MyCheckpointer(Checkpointer):
     def __init__(self, ckpt_dir, max_to_keep=20, **kwargs):
         """A class for making checkpoints.
@@ -52,7 +53,7 @@ class MyCheckpointer(Checkpointer):
         # self._load_status = self._checkpoint.restore(
         #     self._manager.latest_checkpoint)
 
-    def initialize_or_restore(self, session=None):
+    def  initialize_or_restore(self, session=None):
         """
         Modified function to be able to create checkpointer without actually loading the checkpoint on initialization.
         In effect, you need to create the checkpointer (class MyCheckpointer) and call intialize or restore whenever
@@ -518,107 +519,101 @@ def my_to_n_step_transition(
   return Transition(time_steps, policy_steps, next_time_steps)
 
 
+def __call__(self, inputs, *args, **kwargs):
+    """A wrapper around `Network.call`.
 
+    A typical `call` method in a class subclassing `Network` will have a
+    signature that accepts `inputs`, as well as other `*args` and `**kwargs`.
+    `call` can optionally also accept `step_type` and `network_state`
+    (if `state_spec != ()` is not trivial).  e.g.:
 
-class MyTFDriver(driver.Driver):
-  """A driver that runs a TF policy in a TF environment."""
+    ```python
+    def call(self,
+             inputs,
+             step_type=None,
+             network_state=(),
+             training=False):
+        ...
+        return outputs, new_network_state
+    ```
 
-  def __init__(
-      self,
-      env: tf_environment.TFEnvironment,
-      policy: tf_policy.TFPolicy,
-      observers: Sequence[Callable[[trajectory.Trajectory], Any]],
-      transition_observers: Optional[Sequence[Callable[[trajectory.Transition],
-                                                       Any]]] = None,
-      max_steps: Optional[types.Int] = None,
-      max_episodes: Optional[types.Int] = None,
-      disable_tf_function: bool = False):
-    """A driver that runs a TF policy in a TF environment.
+    We will validate the first argument (`inputs`)
+    against `self.input_tensor_spec` if one is available.
 
-    **Note** about bias when using batched environments with `max_episodes`:
-    When using `max_episodes != None`, a `run` step "finishes" when
-    `max_episodes` have been completely collected (hit a boundary).
-    When used in conjunction with environments that have variable-length
-    episodes, this skews the distribution of collected episodes' lengths:
-    short episodes are seen more frequently than long ones.
-    As a result, running an `env` of `N > 1` batched environments
-    with `max_episodes >= 1` is not the same as running an env with `1`
-    environment with `max_episodes >= 1`.
+    If a `network_state` kwarg is given it is also validated against
+    `self.state_spec`.  Similarly, the return value of the `call` method is
+    expected to be a tuple/list with 2 values:  `(output, new_state)`.
+    We validate `new_state` against `self.state_spec`.
 
-    Args:
-      env: A tf_environment.Base environment.
-      policy: A tf_policy.TFPolicy policy.
-      observers: A list of observers that are notified after every step
-        in the environment. Each observer is a callable(trajectory.Trajectory).
-      transition_observers: A list of observers that are updated after every
-        step in the environment. Each observer is a callable((TimeStep,
-        PolicyStep, NextTimeStep)). The transition is shaped just as
-        trajectories are for regular observers.
-      max_steps: Optional maximum number of steps for each run() call. For
-        batched or parallel environments, this is the maximum total number of
-        steps summed across all environments. Also see below.  Default: 0.
-      max_episodes: Optional maximum number of episodes for each run() call. For
-        batched or parallel environments, this is the maximum total number of
-        episodes summed across all environments. At least one of max_steps or
-        max_episodes must be provided. If both are set, run() terminates when at
-        least one of the conditions is
-        satisfied.  Default: 0.
-      disable_tf_function: If True the use of tf.function for the run method is
-        disabled.
-
-    Raises:
-      ValueError: If both max_steps and max_episodes are None.
-    """
-    common.check_tf1_allowed()
-    max_steps = max_steps or 0
-    max_episodes = max_episodes or 0
-    if max_steps < 1 and max_episodes < 1:
-      raise ValueError(
-          'Either `max_steps` or `max_episodes` should be greater than 0.')
-
-    super(MyTFDriver, self).__init__(env, policy, observers, transition_observers)
-
-    self._max_steps = max_steps or np.inf
-    self._max_episodes = max_episodes or np.inf
-
-    if not disable_tf_function:
-      self.run = common.function(self.run, autograph=True)
-
-  def run(self,
-          time_step: ts.TimeStep,
-          policy_state: types.NestedTensor = ()) -> Tuple[ts.TimeStep, types.NestedTensor]:
-    """Run policy in environment given initial time_step and policy_state.
+    If no `network_state` kwarg is given (or if empty `network_state = ()` is
+    given, it is up to `call` to assume a proper "empty" state, and to
+    emit an appropriate `output_state`.
 
     Args:
-      time_step: The initial time_step.
-      policy_state: The initial policy_state.
+      inputs: The input to `self.call`, matching `self.input_tensor_spec`.
+      *args: Additional arguments to `self.call`.
+      **kwargs: Additional keyword arguments to `self.call`.
+        These can include `network_state` and `step_type`.  `step_type` is
+        required if the network's `call` requires it. `network_state` is
+        required if the underlying network's `call` requires it.
 
     Returns:
-      A tuple (final time_step, final policy_state).
+      A tuple `(outputs, new_network_state)`.
     """
-    num_steps = tf.constant(0.0)
-    num_episodes = tf.constant(0.0)
+    if self.input_tensor_spec is not None:
+        nest_utils.assert_matching_dtypes_and_inner_shapes(
+            inputs,
+            self.input_tensor_spec,
+            allow_extra_fields=True,
+            caller=self,
+            tensors_name="`inputs`",
+            specs_name="`input_tensor_spec`")
 
-    while num_steps < self._max_steps and num_episodes < self._max_episodes:
-      action_step = self.policy.action(time_step, policy_state)
-      next_time_step =  self.env.step(action_step.action)
-      traj = trajectory.from_transition(time_step, action_step, next_time_step)
-      for observer in self._transition_observers:
-        observer((time_step, action_step, next_time_step))
-      for observer in self.observers:
-        observer(traj)
+    call_argspec = tf_inspect.getargspec(self.call)
+    if isinstance(call_argspec, FullArgSpec):
+        call_argspec = ArgSpec(
+            args=call_argspec.args,
+            varargs=call_argspec.varargs,
+            keywords=call_argspec.varkw,
+            defaults=call_argspec.defaults,
+        )
 
-      num_episodes += tf.math.reduce_sum(
-          tf.cast(traj.is_boundary(), tf.float32))
-      num_steps += tf.math.reduce_sum(tf.cast(~traj.is_boundary(), tf.float32))
+    # Convert *args, **kwargs to a canonical kwarg representation.
+    normalized_kwargs = tf_inspect.getcallargs(
+        self.call, inputs, *args, **kwargs)
+    # TODO(b/156315434): Rename network_state to just state.
+    network_state = normalized_kwargs.get("network_state", None)
+    normalized_kwargs.pop("self", None)
 
-      time_step = next_time_step
-      policy_state = action_step.state
+    if common.safe_has_state(network_state):
+        nest_utils.assert_matching_dtypes_and_inner_shapes(
+            network_state,
+            self.state_spec,
+            allow_extra_fields=True,
+            caller=self,
+            tensors_name="`network_state`",
+            specs_name="`state_spec`")
 
-    return time_step, policy_state
+    if "step_type" not in call_argspec.args and not call_argspec.keywords:
+        normalized_kwargs.pop("step_type", None)
 
+    # network_state can be a (), None, Tensor or NestedTensors.
+    if (not tf.is_tensor(network_state)
+            and network_state in (None, ())
+            and "network_state" not in call_argspec.args
+            and not call_argspec.keywords):
+        normalized_kwargs.pop("network_state", None)
 
+    outputs, new_state = super(Network, self).__call__(
+        **normalized_kwargs)  # pytype: disable=attribute-error  # typed-keras
 
+    nest_utils.assert_matching_dtypes_and_inner_shapes(
+        new_state,
+        self.state_spec,
+        allow_extra_fields=True,
+        caller=self,
+        tensors_name="`new_state`",
+        specs_name="`state_spec`")
 
-
+    return outputs, new_state
 

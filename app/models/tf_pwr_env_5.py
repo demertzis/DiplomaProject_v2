@@ -19,8 +19,11 @@ class TFPowerMarketEnv(TFEnvironment, tf.Module):
                  number_of_agents: int,
                  avg_consumption_list: List[float],
                  train_mode: bool = True):
-        time_step_spec = TimeStep(step_type=tensor_spec.add_outer_dim(single_agent_time_step_spec.step_type, 1),
-                                  discount=tensor_spec.add_outer_dim(single_agent_time_step_spec.discount, 1),
+        time_step_spec = TimeStep(
+                                  # step_type=tensor_spec.add_outer_dim(single_agent_time_step_spec.step_type, 1),
+                                  step_type=single_agent_time_step_spec.step_type,
+                                  # discount=tensor_spec.add_outer_dim(single_agent_time_step_spec.discount, 1),
+                                  discount=single_agent_time_step_spec.discount,
                                   reward=tensor_spec.add_outer_dim(single_agent_time_step_spec.reward, number_of_agents),
                                   observation=tensor_spec.BoundedTensorSpec(shape=(14,),
                                                                             dtype=tf.float32,

@@ -1,7 +1,7 @@
 import math
 
 import tensorflow as tf
-from config import CRID_COEFFICIENT, AVG_CONSUMPTION
+from config import CRID_COEFFICIENT
 
 def _get_basic_values(prices: tf.Tensor, crid_price: tf.Tensor, tick: tf.Tensor, action: tf.Tensor, avg_consumption: tf.Tensor):
     total_demand = tf.math.reduce_sum(action)
