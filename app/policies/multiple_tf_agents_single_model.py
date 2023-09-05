@@ -1,33 +1,31 @@
-import sys
-from functools import reduce, partial
+import shutil
+import time
 from typing import List, Optional
+
 import tensorflow as tf
+import tf_agents
 from keras.layers import Activation
 from tensorflow import DType
 from tf_agents.agents import TFAgent, data_converter
-from tf_agents.agents.dqn.dqn_agent import DdqnAgent
 from tf_agents.drivers.tf_driver import TFDriver
 from tf_agents.metrics import tf_metrics
-from tf_agents.networks import Sequential, Network
+from tf_agents.networks import Sequential
 from tf_agents.policies.tf_policy import TFPolicy
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.specs import tensor_spec
-from tf_agents.utils import value_ops
+from tf_agents.trajectories import policy_step
+from tf_agents.trajectories import time_step as ts, TimeStep, PolicyStep
+from tf_agents.trajectories.trajectory import Trajectory
+from tf_agents.typing import types
+from tf_agents.utils import common
 
 import config
 from app.abstract.multi_dqn import MultiDdqnAgent
 from app.abstract.utils import MyNetwork, my_discounted_return, my_index_with_actions, my_to_n_step_transition, \
-    MyCheckpointer, __call__
-from config import MAX_BUFFER_SIZE
-from tf_agents.trajectories import time_step as ts, TimeStep, PolicyStep
-from tf_agents.trajectories.trajectory import Trajectory
-from tf_agents.trajectories import policy_step
-from tf_agents.typing import types
-from tf_agents.utils import common
-import tf_agents
-import time
-
+    MyCheckpointer
 from app.models.tf_pwr_env_2 import TFPowerMarketEnv
+from config import MAX_BUFFER_SIZE
+
 
 class MultiAgentSingleModelPolicy(TFPolicy):
     def __init__(self,
@@ -38,7 +36,7 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                  policy_state_spec,
                  info_spec,
                  last_action_dtype: DType,
-                 collect = True
+                 collect=True
                  ):
         self._num_of_agents = len(agent_list)
         # if time_step_spec.observation.shape.rank != 1:
@@ -69,13 +67,13 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                                   action=self._last_action.value())
 
     def _action(self, time_step: ts.TimeStep,
-                      policy_state: types.NestedTensor,
-                      seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
-        #print('Tracing _action')
+                policy_state: types.NestedTensor,
+                seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
+        # print('Tracing _action')
         obs = time_step.observation[0]
         agent_obs = [[]] * self._num_of_agents
         obs_info = [[]] * self._num_of_agents
-        for i in range(self._num_of_agents):
+        for i in range(self._num_of_agen
             agent_obs[i], obs_info[i] = self._agent_list[i].get_observation(obs, time_step.step_type, self._collect)
         stacked_agent_obs = tf.stack(agent_obs)
         batched_observation = tf.expand_dims(stacked_agent_obs, axis=0)
@@ -96,13 +94,15 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         batched_action = tf.expand_dims(stacked_agent_action, axis=0)
         return policy_step.PolicyStep(action=batched_action, state=(), info=())
 
-def create_single_model(network_list: List[Sequential], add_activation_layer = False):
+
+def create_single_model(network_list: List[Sequential], add_activation_layer=False):
     with tf.name_scope('SingleFunctionalModel'):
         num_of_networks = len(network_list)
         if hasattr(network_list[0].get_layer(index=0), 'input'):
             single_network_input_shape = network_list[0].get_layer(index=0).input.shape[1:]
             try:
-                all([network.get_layer(index=0).input.shape[1:] == single_network_input_shape for network in network_list])
+                all([network.get_layer(index=0).input.shape[1:] == single_network_input_shape for network in
+                     network_list])
             except Exception:
                 raise Exception('All inputs of agent networks must have the same shape')
         elif hasattr(network_list[0], 'input_tensor_spec'):
@@ -124,13 +124,14 @@ def create_single_model(network_list: List[Sequential], add_activation_layer = F
         for agent_id, network in enumerate(network_list):
             agent_network = network(unstacked_inputs[agent_id])[0]
             final_agent_network = agent_network if not add_activation_layer \
-                                                else Activation('linear', dtype=tf.float32)(agent_network)
+                else Activation('linear', dtype=tf.float32)(agent_network)
             output_list.append(final_agent_network)
         # output = tf.keras.layers.Concatenate(axis=1, dtype=tf.float32)(output_list)
         output = tf.stack(output_list, axis=1)
         # output = tf.keras.layers.Lambda(partial(tf.stack, axis=1))(output_list)
         model = MyNetwork(tf.keras.Model(inputs=input, outputs=output))
         return model
+
 
 class MultipleAgents(tf.Module):
     # num_iterations = 24 * 100 * 100
@@ -141,7 +142,7 @@ class MultipleAgents(tf.Module):
     # episode_eval_interval = 10
     # eval_interval = 1  # @param {type:"integer"} # 100 days in dataset
 
-    initial_collect_episodes = 20 # @param {type:"integer"}
+    initial_collect_episodes = 20  # @param {type:"integer"}
     collect_steps_per_iteration = 1  # @param {type:"integer"}
     # collect_episodes_per_log = 10
     epochs = 100
@@ -155,7 +156,7 @@ class MultipleAgents(tf.Module):
     def __init__(self, train_env: TFPowerMarketEnv,
                  eval_env: TFPowerMarketEnv,
                  agents_list: List[TFAgent],
-                 ckpt_dir = "new_checkpoints",
+                 ckpt_dir="new_checkpoints",
                  initial_collect_policy: Optional = None):
         self.train_env = train_env
         self.eval_env = eval_env
@@ -190,7 +191,7 @@ class MultipleAgents(tf.Module):
             time_step_spec=collect_ts._replace(step_type=tensor_spec.add_outer_dim(collect_ts.step_type, 1),
                                                discount=tensor_spec.add_outer_dim(collect_ts.discount, 1)),
             action_spec=self._collect_data_context.action_spec,
-            info_spec=self._collect_data_context.info_spec,).trajectory_spec
+            info_spec=self._collect_data_context.info_spec, ).trajectory_spec
 
         self._total_loss = tf.Variable(0.0, dtype=tf.float32, trainable=False)
         # self.global_step = tf.Variable(0, dtype=tf.int64, trainable=False, name='GLOBAL_STEP_MA')
@@ -214,22 +215,28 @@ class MultipleAgents(tf.Module):
         # multi_agent_time_step_spec = tensor_spec.add_outer_dim(agents_list[0].time_step_spec, self._number_of_agents)
         # multi_agent_action_spec = tensor_spec.add_outer_dim(agents_list[0].action_spec, self._number_of_agents)
 
-        #Monkey Patching the function which computes the discounted rewards to work with our multiple agents environment
-        #(It will treat the reward tensor as having 3 dimensions (B, T) plus another for the number of agents
+        # Monkey Patching the function which computes the discounted rewards to work with our multiple agents environment
+        # (It will treat the reward tensor as having 3 dimensions (B, T) plus another for the number of agents
         tf_agents.utils.value_ops.discounted_return = my_discounted_return
 
-        #Monkey Patching the function which gathers the q_values specified by the policy actions to be able to work with
-        #the extra dimension of the q values vector (just adds a dimension for the individual agents actions)
+        # Monkey Patching the function which gathers the q_values specified by the policy actions to be able to work with
+        # the extra dimension of the q values vector (just adds a dimension for the individual agents actions)
         tf_agents.utils.common.index_with_actions = my_index_with_actions
 
-        #Monkey Patching the function tha creates transitions out of trajectories because it doesn't support 1 dimensional
-        #rewards (It needed some changes). Also, it's used by dqn agents during initialization so it has to be patched
-        #after the single agents creation
+        # Monkey Patching the function tha creates transitions out of trajectories because it doesn't support 1 dimensional
+        # rewards (It needed some changes). Also, it's used by dqn agents during initialization so it has to be patched
+        # after the single agents creation
         tf_agents.trajectories.trajectory.to_n_step_transition = my_to_n_step_transition
 
+        learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=1e-4,
+            decay_steps=24000,
+            staircase=True,
+            decay_rate=0.9)
 
         kwargs = {
-            'num_of_agents': self._number_of_agents, #needed to scale the gradients, because otherwise the number of outputs is interpreted as batchsize
+            'num_of_agents': self._number_of_agents,
+            # needed to scale the gradients, because otherwise the number of outputs is interpreted as batchsize
             'time_step_spec': multi_agent_time_step_spec,
             'action_spec': multi_agent_action_spec,
             'training_data_spec': self._training_data_spec,
@@ -237,7 +244,8 @@ class MultipleAgents(tf.Module):
             # 'action_spec': agents_list[0].action_spec,
             'q_network': single_model_q_network,
             'target_q_network': single_model_target_q_network,
-            'optimizer': tf.keras.optimizers.Adam(learning_rate=1e-4),
+            # 'optimizer': tf.keras.optimizers.Adam(learning_rate=1e-4),
+            'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
             # 'epsilon_greedy': 0.1,
             'epsilon_greedy': None,
@@ -251,7 +259,6 @@ class MultipleAgents(tf.Module):
         # x = x.replace(step_type=tf.ones_like(x.step_type, dtype=tf.int64))
         # self._multi_dqn_agent.train(x)
 
-
         self.collect_policy = MultiAgentSingleModelPolicy(self._multi_dqn_agent.collect_policy,
                                                           self._agent_list,
                                                           self.train_env.time_step_spec(),
@@ -259,7 +266,7 @@ class MultipleAgents(tf.Module):
                                                           (),
                                                           (),
                                                           tf.int64,
-                                                          True,)
+                                                          True, )
         self.policy = MultiAgentSingleModelPolicy(self._multi_dqn_agent.policy,
                                                   self._agent_list,
                                                   self.eval_env.time_step_spec(),
@@ -276,8 +283,10 @@ class MultipleAgents(tf.Module):
             max_to_keep=1,
             policy=self.policy
         )
+
+        self._temp_ckpt_dir = 'temp_' + ckpt_dir
         self.temp_checkpoint = MyCheckpointer(
-            ckpt_dir='temp_' + ckpt_dir,
+            ckpt_dir=self._temp_ckpt_dir,
             max_to_keep=1,
             policy=self.policy
         )
@@ -293,7 +302,6 @@ class MultipleAgents(tf.Module):
                                      disable_tf_function=False)
         # self._eval_driver.run = tf.function(self._eval_driver.run, jit_compile=True)
 
-
     @property
     def number_of_agents(self):
         return self._number_of_agents
@@ -302,24 +310,12 @@ class MultipleAgents(tf.Module):
     def collect_data_spec(self):
         return self._collect_data_context.trajectory_spec
 
-
-    # @tf.function
-    # def _train_step(self, experience):
-    #     train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
-    #     train_loss = tf.map_fn(lambda id: tf.switch_case(id,
-    #                                                      train_list),
-    #                            tf.range(self._number_of_agents, dtype=tf.int32),
-    #                            fn_output_signature=tf.float32,
-    #                            parallel_iterations=self._number_of_agents)
-    #     return train_loss
-
-
     def train(self):
-        if not config.USE_JIT:
-            print('Latest trained policy evaluation: {}'.format(self.eval_policy().numpy()))
-            best_avg_return = self.eval_policy(best=True)
-            print('Best policy evaluation: {}'.format(best_avg_return))
-            input('Press Enter to continue...')
+        print('Latest trained policy evaluation: {}'.format(self.eval_policy().numpy()))
+        best_avg_return = self.eval_policy(best=True)
+        print('Best policy evaluation: {}'.format(best_avg_return.numpy()))
+        # input('Press Enter to continue...')
+
         dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3,
             sample_batch_size=self.batch_size,
@@ -337,25 +333,6 @@ class MultipleAgents(tf.Module):
                      max_episodes=self.initial_collect_episodes,
                      disable_tf_function=False).run(self.train_env.reset())
 
-        # @tf.function(jit_compile=True)
-        # def _train_on_experience(experience):
-        #     train_list = [lambda: agent.train(experience).loss for agent in self._agent_list]
-        #     train_loss = tf.map_fn(lambda id: tf.switch_case(id,
-        #                                                      train_list),
-        #                            tf.range(self._number_of_agents, dtype=tf.int32),
-        #                            fn_output_signature=tf.float32,
-        #                            parallel_iterations=self._number_of_agents)
-        #     self._total_loss.assign_add(train_loss / tf.cast(24 * self.epochs, tf.float32))
-        # @tf.function(jit_compile=True)
-        # def _train_on_experience(experience):
-        #     train_loss_list = [0.0 for _ in range(self._number_of_agents)]
-        #     for i in range(self._number_of_agents):
-        #         with tf.device(f'GPU{i}' if self.gpu_split else 'CPU:0'):
-        #             train_loss_list[i] = self._agent_list[i].train(experience).loss
-        #     with tf.device(f'GPU{self.number_of_agents}' if self.gpu_split else 'CPU:0'):
-        #         train_loss = tf.stack(train_loss_list, axis=0)
-        #         self._total_loss.assign_add(train_loss / tf.cast(24 * self.epochs, tf.float32))
-
         def train_step():
             # experience, _ = next(iterator)
             experience, _ = self.replay_buffer.get_next(sample_batch_size=self.batch_size, num_steps=2)
@@ -365,11 +342,13 @@ class MultipleAgents(tf.Module):
 
         collect_driver = TFDriver(self.train_env,
                                   self.collect_policy,
-                                  [lambda traj: self.replay_buffer.add_batch(self.collect_policy.get_last_trajectory(traj)),
+                                  [lambda traj: self.replay_buffer.add_batch(
+                                      self.collect_policy.get_last_trajectory(traj)),
                                    lambda traj: train_step()],
                                   max_episodes=self.epochs,
                                   disable_tf_function=False)
-        # @tf.function
+
+        @tf.function
         def train_epoch():
             self.train_env.hard_reset()
             for agent in self._agent_list:
@@ -380,14 +359,10 @@ class MultipleAgents(tf.Module):
             else:
                 return self.eval_policy()
 
-        # collect_driver.run = tf.function(collect_driver.run, jit_compile=True)
-        time_step = self.train_env.reset()
-        # epoch_train_st = 0.0
-        loss_acc = [0.0] * self._number_of_agents
+        # loss_acc = [0.0] * self._number_of_agents
         epoch_st = time.time()
 
-
-        for i in range(1, self.num_iterations+1):
+        for i in range(1, self.num_iterations + 1):
             avg_return = train_epoch()
             print('Epoch: ', i, '            Avg_return = ', avg_return.numpy())
             print('Avg Train Loss: ', self._total_loss.value().numpy())
@@ -417,17 +392,25 @@ class MultipleAgents(tf.Module):
         for agent in self._agent_list:
             agent.checkpoint_save(train_counter)
 
-    # def create_single_agent_policy(self, policy_list):
-    #     if len(policy_list) != self._number_of_agents:
-    #         raise Exception("There should be provided a list of policies with length equal to the number of agents")
-    #     def new_action(timestep: TimeStep, policy_state = (), seed: Optional[types.Seed] = None) -> PolicyStep:
-    #
-    #     return TFPolicy()
+    def wrap_policy(self, policy_list: List[TFPolicy], collect: bool):
+        if len(policy_list) != self._number_of_agents:
+            raise Exception('Policies List should be a list of size equal to the number of agents, and have different,'
+                            'policy objects')
+        # @tf.function(jit_compile=config.USE_JIT)
+        num_of_agents = self._number_of_agents
 
-    def wrap_policy(self, policy: TFPolicy, collect: bool):
-        # if len(policy_list) != self._number_of_agents:
-        #    raise Exception('Policies List should be a list of size equal to the number of agents, and have different,'
-        #                    'policy objects')
+        class TempPolicy():
+            def action(self,
+                       time_step: ts.TimeStep,
+                       policy_state: types.NestedTensor = (),
+                       seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
+                actions = [[]] * num_of_agents
+                for i in range(num_of_agents):
+                    agent_time_step = time_step._replace(observation=time_step.observation[:, i])
+                    actions[i] = policy_list[i].action(agent_time_step, policy_state, seed).action
+                return PolicyStep(action=tf.stack(actions, axis=1))
+
+        policy = TempPolicy()
         env = self.train_env if collect else self.eval_env
         return MultiAgentSingleModelPolicy(policy,
                                            self._agent_list,
@@ -440,7 +423,7 @@ class MultipleAgents(tf.Module):
 
     # @tf.function
     def eval_policy(self, policy_list: Optional[List] = None, best=False):
-        #print('Tracing eval_policy')
+        # print('Tracing eval_policy')
         if policy_list and best:
             raise Exception('Can only evaluate either a policy list or a saved policy not both')
         if best:
@@ -456,9 +439,14 @@ class MultipleAgents(tf.Module):
             self._eval_driver.run(self.eval_env.reset())
             if best:
                 self.temp_checkpoint.initialize_or_restore()
+                try:
+                    shutil.rmtree(self._temp_ckpt_dir)
+                    print(f"Deleted directory: {self._temp_ckpt_dir}")
+                except Exception as e:
+                    print(f"Error deleting directory: {e}")
             return self._metric.result()
         else:
-            policy = self.wrap_policy(policy_list[0], False)
+            policy = self.wrap_policy(policy_list, False)
             driver = TFDriver(self.eval_env,
                               policy,
                               [self._metric],
@@ -468,9 +456,3 @@ class MultipleAgents(tf.Module):
             time_step = self.eval_env.reset()
             driver.run(time_step)
             return self._metric.result()
-
-
-
-
-
-

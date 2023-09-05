@@ -15,7 +15,8 @@ colab_data_new_env.csv
 colab_data_output_16.csv
 colab_data_with_decay.csv
 colab_data_with_decay_2_dummy.csv
-
+colab_data_output_8_35.csv
+colab_data_output_8_35_offset.csv
 #Generated a random price csv for eval
 make_random_energy.py
 

@@ -186,7 +186,7 @@ def create_single_agent(cls: type,
             #print('Tracing add_new_cars')
             if train_mode:
                 # vehicles = self._generate_vehicles_train(self._collect_steps % tf.constant(24, tf.int64))
-                max_min_charges = tf.repeat([[VEHICLE_BATTERY_CAPACITY, 0.0] + [0.0] * 8],
+                max_min_charges = tf.repeat([[VEHICLE_BATTERY_CAPACITY, 0.0] + [    0.0] * 8],
                                             self._capacity_train_garage,
                                             axis=0)
                 vehicles = tf.concat((self._generate_vehicles_train(self._collect_steps % tf.constant(24, tf.int64)),

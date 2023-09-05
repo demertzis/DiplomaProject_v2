@@ -11,6 +11,7 @@ from intersect import intersection
 # from tf_agents.agents.dqn.dqn_agent import DdqnAgent
 # from tf_agents.networks import sequential
 import tensorflow as tf
+from tf_agents.agents import DqnAgent
 
 from app.models.tf_utils import my_round, my_round_vectorized, my_round_16
 
@@ -418,8 +419,12 @@ def calculate_avg_distribution_constant_shape(days: int = 100,
     return final_tensor
     
 
-    
-
+def extract_q_network(agent: DqnAgent):
+    if not isinstance(agent, DqnAgent):
+        raise Exception('agent has to be instance of DqnAgent')
+    new_model = tf.keras.models.Sequential(agent._q_network.layers)
+    new_model.build((1, 35))
+    return new_model
 
 
 # def compute_avg_consuption_list(list, generator):

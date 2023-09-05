@@ -1,28 +1,25 @@
-import itertools
 import json
 import math
 import sys
 from time import time
 
+import tensorflow as tf
 from tf_agents.agents.dqn.dqn_agent import DdqnAgent
+from tf_agents.networks import sequential
 from tf_agents.specs import tensor_spec
 from tf_agents.trajectories.time_step import TimeStep
-import tensorflow as tf
-from tf_agents.networks import sequential
+
 import app.policies.tf_reward_functions as rf
 import config
-
+from app.abstract.tf_single_agent_single_model import create_single_agent
 from app.models.tf_energy_3 import EnergyCurve
-from app.policies.multiple_tf_agents_single_model import MultipleAgents, MultiAgentSingleModelPolicy
-from app.policies.tf_dummy_v2g import DummyV2G
+from app.models.tf_pwr_env_5 import TFPowerMarketEnv
+from app.policies.multiple_tf_agents_single_model import MultipleAgents
 from app.policies.tf_smarter_charger import SmartCharger
+from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
 # from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
 from config import MAX_BUFFER_SIZE, AVG_CHARGING_RATE
 
-from app.models.tf_pwr_env_5 import TFPowerMarketEnv
-
-from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
-from app.abstract.tf_single_agent_single_model import create_single_agent
 # from data_creation_3 import create_train_data
 
 tf.config.run_functions_eagerly(config.EAGER_EXECUTION)
@@ -34,8 +31,8 @@ NUMBER_OF_AGENTS = argument_num_of_agents
 # tf.debugging.enable_check_numerics()
 reward_function_array = [rf.vanilla,
                          rf.punishing_uniform,
-                         rf.punishing_non_uniform_non_individually_rational,
-                         rf.punishing_non_uniform_individually_rational,]
+                         rf.punishing_non_uniform_individually_rational,
+                         rf.punishing_non_uniform_non_individually_rational,]
 try:
     reward_function = reward_function_array[int(sys.argv[2])]
 except:
@@ -47,9 +44,13 @@ try:
 except:
     single_agent_offset = False
 
-print("Train run: {} agents, reward function = {}, single agent offset = {}".format(NUMBER_OF_AGENTS,
-                                                                                    reward_function.__name__,
-                                                                                    single_agent_offset))
+if NUMBER_OF_AGENTS == 1:
+    print("Train run: {} agents, reward function = {}, single agent offset = {}".format(NUMBER_OF_AGENTS,
+                                                                                        reward_function.__name__,
+                                                                                        single_agent_offset))
+else:
+    print("Train run: {} agents, reward function = {}".format(NUMBER_OF_AGENTS, reward_function.__name__))
+
 
 tf.keras.mixed_precision.set_global_policy('mixed_bfloat16')
 with open('data/vehicles_constant_shape.json') as file:
@@ -57,20 +58,16 @@ with open('data/vehicles_constant_shape.json') as file:
 with open('data/vehicles_constant_shape_offset.json') as file:
     offset_vehicles = VehicleDistributionListConstantShape(json.loads(file.read()))
 
-
 single_agent_time_step_spec = TimeStep(
     step_type=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.int64, minimum=0, maximum=2),
     discount=tensor_spec.BoundedTensorSpec(shape=(), dtype=tf.float32, minimum=0.0, maximum=1.0),
     reward=tensor_spec.TensorSpec(shape=(), dtype=tf.float32),
-    observation=tensor_spec.BoundedTensorSpec(shape=(35,), dtype=tf.float32, minimum=-1., maximum=1.)) #was 33 but added 2 elements (intra day pricing and time of day (1.0 at 0, 0.0 at 24)
+    observation=tensor_spec.BoundedTensorSpec(shape=(35,), dtype=tf.float32, minimum=-1.,
+                                              maximum=1.))  # was 33 but added 2 elements (intra day pricing and time of day (1.0 at 0, 0.0 at 24)
 
 num_actions = 8
 single_agent_action_spec = tensor_spec.BoundedTensorSpec(
-            shape=(), dtype=tf.int64, minimum=0, maximum=num_actions-1, name="action")
-
-model_dir = 'pretrained_networks/model_output_8_35.keras'
-# model_dir = 'pretrained_networks/new_models/model_output_8_agent2.keras'
-offset_model_dir = 'pretrained_networks/model_output_8_35_offset.keras'
+    shape=(), dtype=tf.int64, minimum=0, maximum=num_actions - 1, name="action")
 
 layers_list = \
     [
@@ -105,17 +102,26 @@ def load_pretrained_model(model_dir):
     # temp_model.build(input_shape=(1,35))
     # temp_target_model = tf.keras.models.clone_model(temp_model)
 
-
     q_net = sequential.Sequential(temp_model.layers, name='QNetwork')
     # target_q_net = sequential.Sequential(temp_target_model.layers, name='TargetQNetwork')
     # target_q_net = q_net.copy(name='TargetQNetwork')
     # return q_net, target_q_net
     return q_net
 
-q_net = load_pretrained_model(model_dir)
+
+model_dir = 'pretrained_networks/'
+best_model_dir = 'pretrained_networks/best_models/'
+try:
+    q_net = load_pretrained_model(best_model_dir + 'model_output_8_35.keras')
+except OSError:
+    q_net = load_pretrained_model(model_dir + 'model_output_8_35.keras')
+try:
+    offset_q_net = load_pretrained_model(best_model_dir + 'model_output_8_35_offset.keras')
+except OSError:
+    offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
+
 # q_net = sequential.Sequential(layers_list)
 # q_net.build(input_shape=(1,35))
-offset_q_net = load_pretrained_model(offset_model_dir)
 # offset_q_net = sequential.Sequential(layers_list)
 # offset_q_net.build(input_shape=(1,35))
 
@@ -144,7 +150,7 @@ ckpt_dir = '/'.join(['checkpoints_2',
                      str(NUMBER_OF_AGENTS) +
                      '_AGENTS',
                      reward_name])
-if single_agent_offset:
+if NUMBER_OF_AGENTS == 1 and single_agent_offset:
     ckpt_dir += '_OFFSET'
 coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5
 offset_coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * (x + 3.0)) / 2.0 + 0.5
@@ -154,18 +160,18 @@ agent_list = []
 gpus = tf.config.list_physical_devices('GPU')
 successful_gpu_division = False
 if gpus:
-  try:
-    gpu_mem = 15 * 1024 - tf.config.experimental.get_memory_info('GPU:0')
-    num_devices = NUMBER_OF_AGENTS + 1
-    tf.config.set_logical_device_configuration(
-        gpus[0],
-        [tf.config.LogicalDeviceConfiguration(memory_limit=(gpu_mem - 1024) / num_devices)] * (num_devices))
-    logical_gpus = tf.config.list_logical_devices('GPU')
-    print(len(gpus), "Physical GPU,", len(logical_gpus), "Logical GPUs")
-  except RuntimeError as e:
-    # Virtual devices must be set before GPUs have been initialized
-    print(e)
-  successful_gpu_division = True
+    try:
+        gpu_mem = 15 * 1024 - tf.config.experimental.get_memory_info('GPU:0')
+        num_devices = NUMBER_OF_AGENTS + 1
+        tf.config.set_logical_device_configuration(
+            gpus[0],
+            [tf.config.LogicalDeviceConfiguration(memory_limit=(gpu_mem - 1024) / num_devices)] * (num_devices))
+        logical_gpus = tf.config.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPU,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        # Virtual devices must be set before GPUs have been initialized
+        print(e)
+    successful_gpu_division = True
 for i in range(NUMBER_OF_AGENTS):
     with tf.device(f'GPU:{i}' if successful_gpu_division else 'CPU:0'):
         if i % 3 == 2:
@@ -203,13 +209,13 @@ for i in range(NUMBER_OF_AGENTS):
                                               num_of_actions=num_actions,
                                               capacity_train_garage=100,
                                               capacity_eval_garage=100,
-                                              name='Agent-' + str(i+1),
+                                              name='Agent-' + str(i + 1),
                                               # num_of_agents=NUMBER_OF_AGENTS,
                                               # coefficient_function=offset_coefficient_function,
                                               coefficient_function=coefficient_function if not offset else offset_coefficient_function,
                                               **kwargs))
 
-collect_avg_vehicles_list = tf.constant([0.0]*24)
+collect_avg_vehicles_list = tf.constant([0.0] * 24)
 days = 500
 for agent in agent_list:
     collect_avg_vehicles_list += calculate_avg_distribution_constant_shape(days,
@@ -269,8 +275,8 @@ with tf.device(f'GPU:{NUMBER_OF_AGENTS}' if successful_gpu_division else 'CPU:0'
 multi_agent = MultipleAgents(train_env,
                              eval_env,
                              agent_list,
-                             ckpt_dir,)
-                             # SmartCharger(0.5, num_actions, single_agent_time_step_spec))
+                             ckpt_dir, )
+# SmartCharger(0.5, num_actions, single_agent_time_step_spec))
 
 # variable_list = list(itertools.chain.from_iterable([module.variables if isinstance(module.variables, tuple) or \
 #                                                                         isinstance(module.variables, list)
@@ -309,4 +315,3 @@ else:
     st = time()
     multi_agent.train()
     print('Expired time: {}'.format(time() - st))
-

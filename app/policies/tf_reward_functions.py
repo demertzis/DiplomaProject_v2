@@ -44,8 +44,8 @@ def punishing_uniform(prices: tf.Tensor, crid_price: tf.Tensor, tick: tf.Tensor,
                                                                                            avg_consumption)
     total_ammount = total_demand * (buy_price + sell_price)
     total_prices = tf.concat((prices, [crid_price, sell_price_min]), axis=0)
-    price_diff = (tf.math.reduce_max(total_prices) - tf.math.reduce_min(total_prices))
     min_price = tf.math.reduce_min(total_prices)
+    price_diff = (tf.math.reduce_max(total_prices) - min_price)
     punishing_coefficient_unclipped = 1.6 * tf.math.sigmoid(4 * ((buy_price_max - min_price) / price_diff - 0.5)) - 0.3
     punishing_coefficient = tf.clip_by_value(punishing_coefficient_unclipped, 0.0, 1.0)
     buyers_tensor = tf.clip_by_value(action, 0.0, 10000000.0)
@@ -53,7 +53,8 @@ def punishing_uniform(prices: tf.Tensor, crid_price: tf.Tensor, tick: tf.Tensor,
     sellers_tensor = tf.clip_by_value(action, -10000000.0, 0.0)
     sell_ammount = tf.reduce_sum(sellers_tensor)
     minimum_valid_buy_price = tf.math.divide_no_nan(total_ammount - sell_ammount * sell_price_min, buy_ammount)
-    final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
+    # final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
+    final_buy_price = (buy_price - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
     final_sell_price = tf.math.divide_no_nan((total_ammount - buy_ammount * final_buy_price), sell_ammount)
     # return (tf.cast(tf.less(0.0, action), tf.float32) * final_buy_price + \
     # 	    tf.cast(tf.less(action, 0.0), tf.float32) * final_sell_price) * \
@@ -77,7 +78,8 @@ def punishing_non_uniform_non_individually_rational(prices: tf.Tensor, crid_pric
     sellers_tensor = tf.clip_by_value(action, -10000000.0, 0.0)
     sell_ammount = tf.reduce_sum(sellers_tensor)
     minimum_valid_buy_price = tf.math.divide_no_nan(total_ammount - sell_ammount * sell_price_min, buy_ammount)
-    final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
+    # final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
+    final_buy_price = (buy_price - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
     final_sell_price = tf.math.divide_no_nan((total_ammount - buy_ammount * final_buy_price), sell_ammount)
 
     buy_ratios = tf.math.divide_no_nan(buyers_tensor, buy_ammount)
@@ -133,7 +135,8 @@ def punishing_non_uniform_individually_rational(prices: tf.Tensor, crid_price: t
     sellers_tensor = tf.clip_by_value(action, -10000000.0, 0.0)
     sell_ammount = tf.reduce_sum(sellers_tensor)
     minimum_valid_buy_price = tf.math.divide_no_nan(total_ammount - sell_ammount * sell_price_min, buy_ammount)
-    final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
+    # final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
+    final_buy_price = (buy_price - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
     final_sell_price = tf.math.divide_no_nan((total_ammount - buy_ammount * final_buy_price), sell_ammount)
 
     buy_ratios = tf.math.divide_no_nan(buyers_tensor, buy_ammount)
