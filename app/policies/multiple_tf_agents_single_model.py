@@ -73,7 +73,7 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         obs = time_step.observation[0]
         agent_obs = [[]] * self._num_of_agents
         obs_info = [[]] * self._num_of_agents
-        for i in range(self._num_of_agen
+        for i in range(self._num_of_agents):
             agent_obs[i], obs_info[i] = self._agent_list[i].get_observation(obs, time_step.step_type, self._collect)
         stacked_agent_obs = tf.stack(agent_obs)
         batched_observation = tf.expand_dims(stacked_agent_obs, axis=0)
