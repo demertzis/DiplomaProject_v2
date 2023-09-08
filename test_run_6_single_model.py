@@ -303,13 +303,13 @@ if config.USE_JIT:
 else:
     return_list = []
     # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
-    eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in agent_list]
-    for i in [1] + list(range(5, 101, 5)):
-        i /= 100
-        for policy in eval_policy:
-            policy.threshold = i
-        return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
-    print(return_list)
+    eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in multi_agent._agent_list]
+    # for i in [1] + list(range(5, 101, 5)):
+    #     i /= 100
+    #     for policy in eval_policy:
+    #         policy.threshold = i
+    #     return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
+    # print(return_list)
     print(multi_agent.eval_policy())
     # input("Press Enter to continue...")
     st = time()

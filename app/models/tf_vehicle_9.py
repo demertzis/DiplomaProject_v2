@@ -1,6 +1,8 @@
-from app.models.tf_utils import tf_find_intersection_vectorized_f16, my_pad, tf_find_intersection_vectorized_f32
 import tensorflow as tf
 import tensorflow_probability as tfp
+
+from app.models.tf_utils import tf_find_intersection_vectorized_f32
+
 
 @tf.function(jit_compile=True)
 def park(vehicles: tf.Tensor, max_charging_rate, max_discharging_rate, num_of_vehicles: int):
@@ -14,8 +16,8 @@ def park(vehicles: tf.Tensor, max_charging_rate, max_discharging_rate, num_of_ve
         max_discharging_rate (``float``):
             description: The maximum discharging rate
     """
-    #print('Tracing vectorized_park')
-    mult = tf.constant([[1., 1., 1., 1., 1., 1., 1., 0., 0., 1., 1., 1., 1.,]],
+    # print('Tracing vectorized_park')
+    mult = tf.constant([[1., 1., 1., 1., 1., 1., 1., 0., 0., 1., 1., 1., 1., ]],
                        tf.float32)
     # c = tf.convert_to_tensor([[0., 0., 0., 0., 0., 0., 0., max_charging_rate, max_discharging_rate, 0., 0., 0., 0.]],
     #                         tf.float32)
@@ -26,6 +28,7 @@ def park(vehicles: tf.Tensor, max_charging_rate, max_discharging_rate, num_of_ve
                                     0.0,
                                     1.0)
     return update(new_vehicles * correct_mult, num_of_vehicles)
+
 
 def _calculate_next_max_charge(vehicles: tf.Tensor):
     """
@@ -48,7 +51,7 @@ def _calculate_next_max_charge(vehicles: tf.Tensor):
     ### Returns:
         float : The next max charge
     """
-    #print('Tracing calculate_next_max_charge')
+    # print('Tracing calculate_next_max_charge')
     final_tensor = tf.math.reduce_min(tf.stack((vehicles[..., 7] + vehicles[..., 0],
                                                 vehicles[..., 3],
                                                 tf.clip_by_value((vehicles[..., 2] - 1.0),
@@ -81,17 +84,19 @@ def _calculate_next_min_charge(vehicles: tf.Tensor):
     ### Returns:
         float : The next min charge
     """
-    #print('Tracing calculate_next_min_charge')
+    # print('Tracing calculate_next_min_charge')
     final_tensor = tf.math.reduce_max(tf.stack((vehicles[..., 0] - vehicles[..., 8],
                                                 vehicles[..., 4],
                                                 vehicles[..., 1] - \
-                                                    tf.clip_by_value((vehicles[..., 2] - 1.0),
-                                                                      0.0,
-                                                                      12.0) * \
-                                                    vehicles[..., 7]),
+                                                tf.clip_by_value((vehicles[..., 2] - 1.0),
+                                                                 0.0,
+                                                                 12.0) * \
+                                                vehicles[..., 7]),
                                                axis=0),
                                       axis=0)
     return final_tensor
+
+
 def _update_next_charging_states(vehicles: tf.Tensor):
     """
     Update max and min charge state variables
@@ -100,7 +105,7 @@ def _update_next_charging_states(vehicles: tf.Tensor):
     - ``ΔΕ-(max) = max(0, current_charge - next_min_charge)``
     - ``ΔΕ-(min) = max(0, current_charge - next_max_charge)``
     """
-    #print('Tracing vectorized_update_next_charging_states')
+    # print('Tracing vectorized_update_next_charging_states')
     next_max_charge = _calculate_next_max_charge(vehicles)
     next_min_charge = _calculate_next_min_charge(vehicles)
     zeros = tf.zeros_like(next_max_charge, tf.float32)
@@ -108,11 +113,11 @@ def _update_next_charging_states(vehicles: tf.Tensor):
     new_min_charge = tf.math.maximum(zeros, next_min_charge - vehicles[..., 0])
     new_max_discharge = tf.math.maximum(zeros, vehicles[..., 0] - next_min_charge)
     new_min_discharge = tf.math.maximum(zeros, vehicles[..., 0] - next_max_charge)
-    new_stack = tf.transpose(tf.stack((new_max_charge,
-                                       new_min_charge,
-                                       new_max_discharge,
-                                       new_min_discharge,),
-                                      axis=0))
+    new_stack = tf.stack((new_max_charge,
+                          new_min_charge,
+                          new_max_discharge,
+                          new_min_discharge,),
+                         axis=-1)
     return tf.concat((vehicles[..., :9], new_stack), axis=1)
 
 
@@ -131,14 +136,14 @@ def _calculate_charge_curves(vehicles: tf.Tensor, num_of_vehicles: int):
     ### Returns
         Tuple[float[], float[]] : The points of the max and min curve respectively in ascending time order
     """
-    #print('Tracing vectorized_calculate_charge_curves_2')
+    # print('Tracing vectorized_calculate_charge_curves_2')
     unrolled_tensor = tf.concat((tf.range(12.0, -0.1, -1.0), tf.zeros((12,), tf.float32)), axis=0)
     t = tf.vectorized_map(lambda t: tf.roll(unrolled_tensor, t - 12, axis=0)[0:13],
-                            tf.cast(vehicles[..., 2], tf.int32))
+                          tf.cast(vehicles[..., 2], tf.int32))
     temp = tf.repeat(tf.expand_dims(tf.range(13.0), 0), num_of_vehicles, axis=0)
     multiplier_tensor = tf.stack((temp,
-                                    t),
-                                   axis=0)
+                                  t),
+                                 axis=0)
     max_curve_charge_rates = tf.stack((vehicles[..., 7:8], vehicles[..., 8:9]), axis=0)
     charge_rates = tf.stack((tf.reverse(max_curve_charge_rates, axis=[0]),
                              max_curve_charge_rates),
@@ -149,6 +154,7 @@ def _calculate_charge_curves(vehicles: tf.Tensor, num_of_vehicles: int):
     return tf.clip_by_value(curves_no_clip,
                             clip_value_min=vehicles[..., 4:5],
                             clip_value_max=vehicles[..., 3:4])
+
 
 # @tf.function
 def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int):
@@ -170,7 +176,7 @@ def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int):
     From the above it is obvious that the following is true for the two priorities:
     ``charging_priority = 1 - discharging_priority``
     """
-    #print('Tracing vectorized_update_priorities')
+    # print('Tracing vectorized_update_priorities')
     x_axes = tf.range(13.0)
     curves = _calculate_charge_curves(vehicles, num_of_vehicles)
     current_charge = vehicles[..., 0]
@@ -178,7 +184,7 @@ def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int):
     time_before_departure = vehicles[..., 2]
     curves_areas = tfp.math.trapz(curves)
     diff_curve_areas = curves_areas[1] - curves_areas[0]
-    current_charge_expanded = tf.expand_dims(current_charge, axis=1)
+    current_charge_expanded = tf.expand_dims(current_charge, axis=-1)
     intersections = tf_find_intersection_vectorized_f32(x_axes,
                                                         curves,
                                                         current_charge_expanded,
@@ -226,16 +232,18 @@ def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int):
     #                               tf.reverse(probs_stacked, [0]))
     mask = tf.cast(tf.less(0, intersection_gather_index[..., :1]), tf.float32)
     final_probs_update = mask * probs_stacked + (tf.ones_like(mask) - mask) * tf.reverse(probs_stacked, [1])
-    return tf.concat((vehicles[..., :5], final_probs_update , vehicles[..., 7:]), axis=1)
+    return tf.concat((vehicles[..., :5], final_probs_update, vehicles[..., 7:]), axis=1)
+
 
 # @tf.function
 def update(vehicle: tf.Tensor, num_of_vehicles: int):
     """
     Update state variables
     """
-    #print('Tracing vectorized_update')
+    # print('Tracing vectorized_update')
     v = _update_next_charging_states(vehicle)
     return _update_priorities(v, num_of_vehicles)
+
 
 # @tf.function(jit_compile=True)
 def update_current_charge(charging_coefficient: tf.Tensor,
@@ -264,7 +272,7 @@ def update_current_charge(charging_coefficient: tf.Tensor,
     ### Returns:
         float : The residue energy that wasn't allocated by this vehicle
     """
-    #print('Tracing vectorized_update_current_charge')
+    # print('Tracing vectorized_update_current_charge')
     # condition = tf.less_equal(0.0, charging_coefficient)
     # condition = tf.sign(charging_coefficient)
     sign = tf.sign(charging_coefficient)
@@ -289,12 +297,13 @@ def update_current_charge(charging_coefficient: tf.Tensor,
                              axis=1)
     return update(new_vehicles, num_of_vehicles)
 
+
 @tf.function(jit_compile=True)
 def update_emergency_demand(vehicles: tf.Tensor):
     """
     Satisfy the minimum demand of the vehicle
     """
-    #print('Tracing update_emergency_demand')
+    # print('Tracing update_emergency_demand')
     min_charge = vehicles[..., 10:11]
     min_discharge = vehicles[..., 12:13]
     zeros = tf.zeros_like(min_charge)
@@ -305,4 +314,3 @@ def update_emergency_demand(vehicles: tf.Tensor):
                       vehicles[..., 11:12] - min_discharge,
                       zeros),
                      axis=1)
-

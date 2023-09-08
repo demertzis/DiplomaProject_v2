@@ -1,26 +1,19 @@
 import math
-from typing import Callable, Optional, List
+from typing import Callable, List
 
 import tensorflow as tf
-import numpy as np
+from tf_agents.agents import TFAgent
 from tf_agents.agents.tf_agent import LossInfo
-from tf_agents.specs import tensor_spec
 from tf_agents.trajectories import trajectory
-from tf_agents.trajectories.policy_step import PolicyStep
-from tf_agents.trajectories.time_step import TimeStep
 from tf_agents.typing import types
-from tf_agents.agents import TFAgent, data_converter
-from tf_agents.typing.types import TensorSpec, SpecTensorOrArray
-from tf_agents.utils import nest_utils, common
+from tf_agents.typing.types import SpecTensorOrArray
 from tf_agents.utils.common import Checkpointer
 
-import config
 from app.abstract.utils import MyCheckpointer
-from app.models.tf_utils import my_round, my_round_16
 from app.models.tf_parking_10 import Parking
-from app.utils import generate_vehicles, generate_vehicles_constant_shape
-
+from app.utils import generate_vehicles_constant_shape
 from config import VEHICLE_BATTERY_CAPACITY, NUM_OF_ACTIONS
+
 
 def create_single_agent(cls: type,
                         vehicle_distribution: List,
@@ -33,8 +26,7 @@ def create_single_agent(cls: type,
                         capacity_eval_garage: int = 100,
                         coefficient_function: Callable = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5,
                         *args,
-                        **kwargs,):
-
+                        **kwargs, ):
     class_list = [cls]
     temp = cls
     while temp.__bases__:
@@ -62,13 +54,14 @@ def create_single_agent(cls: type,
                 raise Exception('Agent _name must have an integer'
                                 ' to denote the agents unique id.'
                                 'For example: Agent_1')
-            #Parking fields. Can be removed in a different setting
+            # Parking fields. Can be removed in a different setting
             self._num_of_actions = num_of_actions
             self._capacity_train_garage = capacity_train_garage
             self._capacity_eval_garage = capacity_eval_garage
             self._train_parking = Parking(capacity_train_garage, 'train')
             self._eval_parking = Parking(capacity_eval_garage, 'eval')
             # self._generate_vehicles_train = generate_vehicles(coefficient_function)
+            self._coefficient_function = coefficient_function
             self._generate_vehicles_train = generate_vehicles_constant_shape(coefficient_function,
                                                                              self._capacity_train_garage)
             # with open('data/vehicles_old.json') as file:
@@ -94,13 +87,13 @@ def create_single_agent(cls: type,
             #                                   trainable=False,
             #                                   name=name + ': private index')
             # self._buffer_max_size = buffer_max_size
-            #TODO decide on weather it's needed
-            #TODO remove avg vehicle list, there should not be access to global variables
+            # TODO decide on weather it's needed
+            # TODO remove avg vehicle list, there should not be access to global variables
 
             self._collect_steps = tf.Variable(-1,
-                                            dtype=tf.int64,
-                                            trainable=False,
-                                            name=name + ': time_of_day')
+                                              dtype=tf.int64,
+                                              trainable=False,
+                                              name=name + ': time_of_day')
             self._eval_steps = tf.Variable(-1,
                                            dtype=tf.int64,
                                            trainable=False,
@@ -147,12 +140,17 @@ def create_single_agent(cls: type,
 
         def reset_collect_steps(self):
             self._collect_steps.assign(-1)
+
         def reset_eval_steps(self):
             self._eval_steps.assign(-1)
 
         @property
         def private_index(self):
             return self._private_index.value().numpy()
+
+        @property
+        def coefficient_function(self):
+            return self._coefficient_function
 
         @private_index.setter
         def private_index(self, index):
@@ -161,6 +159,7 @@ def create_single_agent(cls: type,
         @property
         def train_vehicles_generator(self):
             return self._generate_vehicles_train
+
         # @tf.function
         # def _add_new_cars(self, train_mode=True): # TODO decide on way to choose between distributions
         #     #print('Tracing add_new_cars')
@@ -182,11 +181,11 @@ def create_single_agent(cls: type,
         #         self._eval_parking.assign_vehicles(vehicles)
 
         # @tf.function(jit_compile=True)
-        def _add_new_cars(self, train_mode=True): # TODO decide on way to choose between distributions
-            #print('Tracing add_new_cars')
+        def _add_new_cars(self, train_mode=True):  # TODO decide on way to choose between distributions
+            # print('Tracing add_new_cars')
             if train_mode:
                 # vehicles = self._generate_vehicles_train(self._collect_steps % tf.constant(24, tf.int64))
-                max_min_charges = tf.repeat([[VEHICLE_BATTERY_CAPACITY, 0.0] + [    0.0] * 8],
+                max_min_charges = tf.repeat([[VEHICLE_BATTERY_CAPACITY, 0.0] + [0.0] * 8],
                                             self._capacity_train_garage,
                                             axis=0)
                 vehicles = tf.concat((self._generate_vehicles_train(self._collect_steps % tf.constant(24, tf.int64)),
@@ -218,7 +217,7 @@ def create_single_agent(cls: type,
             print('Tracing train')
             return super()._train(self.preprocess_sequence(experience), weights)
 
-        def get_action(self, step: SpecTensorOrArray, augmented_obs: SpecTensorOrArray, parking_fields, collect = True):
+        def get_action(self, step: SpecTensorOrArray, augmented_obs: SpecTensorOrArray, parking_fields, collect=True):
             # if collect:
             #     indices_tensor = (tf.constant([[0]], tf.int64) + self._private_index) % self._buffer_max_size
             #     self._private_index.assign_add(tf.constant(1, tf.int64))
@@ -230,7 +229,8 @@ def create_single_agent(cls: type,
                                   collect)
             return load
 
-        def get_observation(self, observation: SpecTensorOrArray, step_type: SpecTensorOrArray, collect=True) -> SpecTensorOrArray:
+        def get_observation(self, observation: SpecTensorOrArray, step_type: SpecTensorOrArray,
+                            collect=True) -> SpecTensorOrArray:
             """
             Adds cars and returns the parking observation concatenated at the end of the environment observation.
             Should be used exactly once per step in the environment.
@@ -388,12 +388,12 @@ def create_single_agent(cls: type,
 
         @tf.function(jit_compile=True)
         def _calculate_vehicle_distribution(self, train: bool):
-            #print('Tracing calculate_vehicle_distribution')
+            # print('Tracing calculate_vehicle_distribution')
             if train:
-                departure_tensor = tf.cast(self._train_parking.vehicles[..., 2], tf.float32)
+                departure_tensor = tf.cast(self._train_parking._vehicles[..., 2], tf.float32)
                 capacity = self._capacity_train_garage
             else:
-                departure_tensor = tf.cast(self._eval_parking.vehicles[..., 2], tf.float32)
+                departure_tensor = tf.cast(self._eval_parking._vehicles[..., 2], tf.float32)
                 capacity = self._capacity_eval_garage
             fn = lambda t: tf.reduce_sum(tf.clip_by_value(departure_tensor - t, 0.0, 1.0))
             departure_distribution_tensor = tf.vectorized_map(fn, tf.range(0.0, 12.0))
@@ -401,7 +401,7 @@ def create_single_agent(cls: type,
 
         @tf.function(jit_compile=True)
         def _get_parking_observation(self, train: bool):
-            #print('Tracing get_parking_observation')
+            # print('Tracing get_parking_observation')
             if train:
                 parking = self._train_parking.return_fields()
                 capacity = self._capacity_train_garage
@@ -472,18 +472,18 @@ def create_single_agent(cls: type,
                              next_max_discharge / max_discharging_rate / capacity,
                              next_min_discharge / max_discharging_rate / capacity,
                              parking.charge_mean_priority,
-                             parking.discharge_mean_priority,],
+                             parking.discharge_mean_priority, ],
                             axis=0), parking
 
         @tf.function(jit_compile=True)
-        def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, parking_fields, collect_mode = True):
-            #print('Tracing get_load')
+        def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, parking_fields, collect_mode=True):
+            # print('Tracing get_load')
             parking = self._train_parking if collect_mode else self._eval_parking
             # parking_fields = parking.return_fields()
             # observation = tf.cast(observation, tf.float16)
             length = tf.constant((self._num_of_actions - 1), dtype=tf.float32)
             start = self._num_of_multi_agent_observation_elements
-            max_coefficient, threshold_coefficient, min_coefficient = tf.unstack(observation[..., start:start+3])
+            max_coefficient, threshold_coefficient, min_coefficient = tf.unstack(observation[..., start:start + 3])
             # max_coefficient = observation[..., 13]
             # threshold_coefficient = observation[..., 14]
             # min_coefficient =observation[..., 15]
@@ -491,7 +491,8 @@ def create_single_agent(cls: type,
             charging_coefficient = tf.cast(action_step, dtype=tf.float32) * step + min_coefficient
             sign_coefficient = tf.sign(charging_coefficient)
             new_energy = tf.maximum(charging_coefficient * parking_fields.next_max_charge,
-                                    tf.negative(charging_coefficient) * parking_fields.next_max_discharge) * sign_coefficient
+                                    tf.negative(
+                                        charging_coefficient) * parking_fields.next_max_discharge) * sign_coefficient
             self._update_parking(parking,
                                  parking_fields,
                                  new_energy,
@@ -506,7 +507,7 @@ def create_single_agent(cls: type,
                             new_energy,
                             charging_coefficient,
                             threshold_coefficient):
-            #print('Tracing update_parking')
+            # print('Tracing update_parking')
             # parking = self._train_parking.return_fields() if train else self._eval_parking.return_fields()
             available_energy = new_energy + parking_fields.next_min_discharge - parking_fields.next_min_charge
             max_non_emergency_charge = parking_fields.next_max_charge - parking_fields.next_min_charge
@@ -524,8 +525,8 @@ def create_single_agent(cls: type,
                                                                        is_charging))
             # update_coefficient = my_round_16(update_coefficient, 2)
             parking.update(update_coefficient,
-                           parking_fields.next_max_charge-parking_fields.next_min_charge,
-                           parking_fields.next_max_discharge-parking_fields.next_min_discharge,
+                           parking_fields.next_max_charge - parking_fields.next_min_charge,
+                           parking_fields.next_max_discharge - parking_fields.next_min_discharge,
                            False)
 
         def wrap_external_policy_action(self, action, collect: bool):

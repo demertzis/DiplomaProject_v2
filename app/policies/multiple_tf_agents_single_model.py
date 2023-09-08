@@ -21,6 +21,7 @@ from tf_agents.utils import common
 
 import config
 from app.abstract.multi_dqn import MultiDdqnAgent
+from app.abstract.tf_unified_agents_single_model import UnifiedAgent
 from app.abstract.utils import MyNetwork, my_discounted_return, my_index_with_actions, my_to_n_step_transition, \
     MyCheckpointer
 from app.models.tf_pwr_env_2 import TFPowerMarketEnv
@@ -38,7 +39,14 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                  last_action_dtype: DType,
                  collect=True
                  ):
-        self._num_of_agents = len(agent_list)
+        if isinstance(agent_list, UnifiedAgent):
+            self._use_unified_agent = True
+            self._num_of_agents = agent_list._num_of_agents
+            self._agent_list = [agent_list]
+        else:
+            self._use_unified_agent = False
+            self._num_of_agents = len(agent_list)
+            self._agent_list = agent_list
         # if time_step_spec.observation.shape.rank != 1:
         #     raise Exception('Cannot create single parallel model. Observation shape must have rank 1')
         super(MultiAgentSingleModelPolicy, self).__init__(
@@ -48,14 +56,16 @@ class MultiAgentSingleModelPolicy(TFPolicy):
             info_spec,
         )
         self._policy = policy
-        self._agent_list = agent_list
         self._collect = collect
         self.action = tf.function(self.action, jit_compile=config.USE_JIT)
         # self.gpu_split = len(tf.config.list_logical_devices('GPU')) + 1 == self._num_of_agents
         if collect:
-            self._last_observation = tf.Variable(tf.zeros(shape=[1] + \
-                                                                [self._num_of_agents] + \
-                                                                self._agent_list[0].time_step_spec.observation.shape,
+            if isinstance(agent_list, UnifiedAgent):
+                single_agent_observation_shape = self._agent_list[0].agent_list[0].time_step_spec.observation.shape
+            else:
+                single_agent_observation_shape = self._agent_list[0].time_step_spec.observation.shape
+            self._last_observation = tf.Variable(tf.zeros(shape=[1, self._num_of_agents] +\
+                                                                single_agent_observation_shape,
                                                           dtype=self.collect_data_spec.observation.dtype))
             # self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
             #                                          dtype=last_action_dtype))
@@ -71,27 +81,32 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                 seed: Optional[types.Seed] = None) -> policy_step.PolicyStep:
         # print('Tracing _action')
         obs = time_step.observation[0]
-        agent_obs = [[]] * self._num_of_agents
-        obs_info = [[]] * self._num_of_agents
-        for i in range(self._num_of_agents):
+        agent_obs = [[]] * len(self._agent_list)
+        obs_info = [[]] * len(self._agent_list)
+        for i in range(len(self._agent_list)):
             agent_obs[i], obs_info[i] = self._agent_list[i].get_observation(obs, time_step.step_type, self._collect)
-        stacked_agent_obs = tf.stack(agent_obs)
-        batched_observation = tf.expand_dims(stacked_agent_obs, axis=0)
-
+        stacked_agent_obs = tf.stack(agent_obs, axis=0)
+        if not self._use_unified_agent:
+            batched_observation = tf.expand_dims(stacked_agent_obs, axis=0)
+        else:
+            batched_observation = stacked_agent_obs
         single_model_action_vector = self._policy.action(time_step._replace(observation=batched_observation))
-        agent_action = [[]] * self._num_of_agents
-        for i in range(self._num_of_agents):
+        agent_action = [[]] * len(self._agent_list)
+        for i in range(len(self._agent_list)):
             agent_action[i] = self._agent_list[i].get_action(single_model_action_vector.action[0][i],
                                                              stacked_agent_obs[i],
                                                              obs_info[i],
                                                              self._collect)
-        stacked_agent_action = tf.stack(agent_action)
+        stacked_agent_action = tf.stack(agent_action, axis=0)
+        if not self._use_unified_agent:
+            batched_action = tf.expand_dims(stacked_agent_action, axis=0)
+        else:
+            batched_action = stacked_agent_action
         if self._collect:
-            # tf.print(batched_observation)
             self._last_observation.assign(batched_observation)
         if self._collect:
             self._last_action.assign(single_model_action_vector.action)
-        batched_action = tf.expand_dims(stacked_agent_action, axis=0)
+
         return policy_step.PolicyStep(action=batched_action, state=(), info=())
 
 
@@ -162,10 +177,11 @@ class MultipleAgents(tf.Module):
         self.eval_env = eval_env
         self.ckpt_dir = ckpt_dir
         self.returns = []
-        self._agent_list: List[TFAgent] = agents_list
+        self._unified_agent = UnifiedAgent(agents_list)
+        self._agent_list: List[TFAgent] = self._unified_agent.agent_list
         self._number_of_agents = len(self._agent_list)
 
-        ts = agents_list[0].time_step_spec
+        ts = self._agent_list[0].time_step_spec
         # tensor_spec.add_outer_dim(agents_list[0].time_step_spec, dim=3)
         multi_agent_time_step_spec = TimeStep(step_type=ts.step_type,
                                               # step_type=tensor_spec.add_outer_dim(ts.step_type, 1),
@@ -178,7 +194,7 @@ class MultipleAgents(tf.Module):
                                                                                     dim=self._number_of_agents))
 
         # multi_agent_action_spec = tensor_spec.add_outer_dims_nest(agents_list[0].action_spec, (self._number_of_agents,))
-        multi_agent_action_spec = tensor_spec.add_outer_dims_nest(agents_list[0].action_spec, (self._number_of_agents,))
+        multi_agent_action_spec = tensor_spec.add_outer_dims_nest(self._agent_list[0].action_spec, (self._number_of_agents,))
 
         self._collect_data_context = data_converter.DataContext(
             time_step_spec=multi_agent_time_step_spec,
@@ -210,8 +226,8 @@ class MultipleAgents(tf.Module):
         if self.checkpoint.checkpoint_exists:
             print("Checkpoint found on specified folder. Continuing from there...")
 
-        single_model_q_network = create_single_model([agent._q_network for agent in agents_list])
-        single_model_target_q_network = create_single_model([agent._target_q_network for agent in agents_list])
+        single_model_q_network = create_single_model([agent._q_network for agent in self._agent_list])
+        single_model_target_q_network = create_single_model([agent._target_q_network for agent in self._agent_list])
         # multi_agent_time_step_spec = tensor_spec.add_outer_dim(agents_list[0].time_step_spec, self._number_of_agents)
         # multi_agent_action_spec = tensor_spec.add_outer_dim(agents_list[0].action_spec, self._number_of_agents)
 
@@ -260,7 +276,8 @@ class MultipleAgents(tf.Module):
         # self._multi_dqn_agent.train(x)
 
         self.collect_policy = MultiAgentSingleModelPolicy(self._multi_dqn_agent.collect_policy,
-                                                          self._agent_list,
+                                                          # self._agent_list,
+                                                          self._unified_agent,
                                                           self.train_env.time_step_spec(),
                                                           self.train_env.action_spec(),
                                                           (),
@@ -268,7 +285,8 @@ class MultipleAgents(tf.Module):
                                                           tf.int64,
                                                           True, )
         self.policy = MultiAgentSingleModelPolicy(self._multi_dqn_agent.policy,
-                                                  self._agent_list,
+                                                  # self._agent_list,
+                                                  self._unified_agent,
                                                   self.eval_env.time_step_spec(),
                                                   self.eval_env.action_spec(),
                                                   (),
