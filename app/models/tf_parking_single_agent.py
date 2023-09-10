@@ -130,18 +130,18 @@ class Parking:
         # print('Tracing update_parking_state')
         num_of_vehicles = tf.cast(self._num_of_vehicles, tf.float32)
         priorities = vehicles[..., 5:7]
-        current_charges = vehicles[..., 0]
+        current_charges = vehicles[..., 0:1]
         charges = vehicles[..., 9:]
         charges_sum = tf.reduce_sum(charges, axis=-2)
         priorities_sum = tf.reduce_sum(priorities, axis=-2)
         priorities_mean = tf.math.divide_no_nan(priorities_sum, tf.expand_dims(num_of_vehicles, axis=-1))
-        return [charges_sum[..., 0],
-                charges_sum[..., 1],
-                charges_sum[..., 2],
-                charges_sum[..., 3],
-                priorities_mean[..., 0],
-                priorities_mean[..., 1],
-                tf.reduce_sum(current_charges, axis=-1),
+        return [charges_sum[..., 0:1],
+                charges_sum[..., 1:2],
+                charges_sum[..., 2:3],
+                charges_sum[..., 3:4],
+                priorities_mean[..., 0:1],
+                priorities_mean[..., 1:2],
+                tf.reduce_sum(current_charges, axis=-2),
                 self._max_charging_rate_32,
                 self._max_discharging_rate]
 
@@ -163,8 +163,8 @@ class Parking:
                                         charging_coefficient,
                                         new_next_max_charge,
                                         new_next_max_discharge)
-        self._num_of_vehicles.assign(tf.cast(tf.reduce_sum(tf.clip_by_value(staying_vehicles[..., 2], 0.0, 1.0)),
-                                             tf.int64))
+        self._num_of_vehicles.assign(
+            tf.cast(tf.reduce_sum(tf.clip_by_value(staying_vehicles[..., 2], 0.0, 1.0), axis=-1), tf.int64))
         self._vehicles.assign(staying_vehicles)
 
     # @tf.function
@@ -174,7 +174,11 @@ class Parking:
         """
         # print('Tracing depart_vehicles')
         sorted_args = tf.argsort(vehicle_array[..., 2], direction='DESCENDING')
-        vehicle_list = tf.gather(vehicle_array, sorted_args)
+        coordinates = tf.meshgrid(tf.range(self._num_of_agents), tf.range(self._capacity_int32), indexing='ij')
+        gather_tensor = tf.stack(coordinates[:-1] + [sorted_args], axis=-1)
+        vehicle_list = tf.gather_nd(vehicle_array, gather_tensor)
+
+        # vehicle_list = tf.gather(vehicle_array, sorted_args)
         mult_tensor = tf.clip_by_value(vehicle_list[..., 2:3], 0.0, 1.0)
         return vehicle_list * mult_tensor
 
@@ -193,13 +197,17 @@ class Parking:
         neg_is_charging = tf.cast(tf.less(charging_coefficient, 0.0), tf.float32)
         vehicle_array = Vehicle.update_emergency_demand(vehicles)
         norm_constants = tf.math.divide_no_nan(tf.reduce_sum(vehicle_array[..., 9:12:2] * vehicle_array[..., 5:7],
-                                                             axis=0),
-                                               tf.stack((next_max_charge, next_max_discharge),
-                                                        axis=0))
-        normalization_constant = tf.maximum(is_charging * norm_constants[0], neg_is_charging * norm_constants[1])
+                                                             axis=-2),
+                                               tf.concat((next_max_charge, next_max_discharge),
+                                                         axis=-1))
+        normalization_constant = tf.maximum(is_charging * norm_constants[..., 0:1],
+                                            neg_is_charging * norm_constants[..., 1:2])
         tensor_mapping = is_charging * vehicle_array[..., 5] + neg_is_charging * vehicle_array[..., 6]
-        sorted_args = tf.argsort(tensor_mapping, direction='DESCENDING')
-        sorted_vehicles = tf.gather(vehicle_array, sorted_args)
+        sorted_args = tf.argsort(tensor_mapping, axis=-1, direction='DESCENDING')
+        coordinates = tf.meshgrid(tf.range(self._num_of_agents), tf.range(self._capacity_int32), indexing='ij')
+        gather_tensor = tf.stack(coordinates[:-1] + [sorted_args], axis=-1)
+        sorted_vehicles = tf.gather_nd(vehicle_array, gather_tensor)
+        # sorted_vehicles = tf.gather(vehicle_array, sorted_args)
         new_vehicles = Vehicle.update_current_charge(charging_coefficient,
                                                      normalization_constant,
                                                      sorted_vehicles,

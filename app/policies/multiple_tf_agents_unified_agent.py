@@ -39,9 +39,14 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                  last_action_dtype: DType,
                  collect=True
                  ):
-
-        self._num_of_agents = len(agent_list)
-        self._agent_list = agent_list
+        if isinstance(agent_list, UnifiedAgent):
+            self._use_unified_agent = True
+            self._num_of_agents = agent_list._num_of_agents
+            self._agent_list = [agent_list]
+        else:
+            self._use_unified_agent = False
+            self._num_of_agents = len(agent_list)
+            self._agent_list = agent_list
         # if time_step_spec.observation.shape.rank != 1:
         #     raise Exception('Cannot create single parallel model. Observation shape must have rank 1')
         super(MultiAgentSingleModelPolicy, self).__init__(
@@ -55,11 +60,16 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         self.action = tf.function(self.action, jit_compile=config.USE_JIT)
         # self.gpu_split = len(tf.config.list_logical_devices('GPU')) + 1 == self._num_of_agents
         if collect:
-            single_agent_observation_shape = self._agent_list[0].time_step_spec.observation.shape
+            if isinstance(agent_list, UnifiedAgent):
+                single_agent_observation_shape = self._agent_list[0].agent_list[0].time_step_spec.observation.shape
+            else:
+                single_agent_observation_shape = self._agent_list[0].time_step_spec.observation.shape
             self._last_observation = tf.Variable(tf.zeros(shape=[1, self._num_of_agents] +\
                                                                 single_agent_observation_shape,
                                                           dtype=self.collect_data_spec.observation.dtype))
-            self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
+            # self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
+            #                                          dtype=last_action_dtype))
+            self._last_action = tf.Variable(tf.zeros(shape=[1, self._num_of_agents],
                                                      dtype=last_action_dtype))
 
     def get_last_trajectory(self, trajectory: Trajectory):
@@ -76,7 +86,10 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         for i in range(len(self._agent_list)):
             agent_obs[i], obs_info[i] = self._agent_list[i].get_observation(obs, time_step.step_type, self._collect)
         stacked_agent_obs = tf.stack(agent_obs, axis=0)
-        batched_observation = tf.expand_dims(stacked_agent_obs, axis=0)
+        if not self._use_unified_agent:
+            batched_observation = tf.expand_dims(stacked_agent_obs, axis=0)
+        else:
+            batched_observation = stacked_agent_obs
         single_model_action_vector = self._policy.action(time_step._replace(observation=batched_observation))
         agent_action = [[]] * len(self._agent_list)
         for i in range(len(self._agent_list)):
@@ -85,7 +98,10 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                                                              obs_info[i],
                                                              self._collect)
         stacked_agent_action = tf.stack(agent_action, axis=0)
-        batched_action = tf.expand_dims(stacked_agent_action, axis=0)
+        if not self._use_unified_agent:
+            batched_action = tf.expand_dims(stacked_agent_action, axis=0)
+        else:
+            batched_action = stacked_agent_action
         if self._collect:
             self._last_observation.assign(batched_observation)
         if self._collect:
@@ -161,7 +177,8 @@ class MultipleAgents(tf.Module):
         self.eval_env = eval_env
         self.ckpt_dir = ckpt_dir
         self.returns = []
-        self._agent_list: List[TFAgent] = agents_list
+        self._unified_agent = UnifiedAgent(agents_list)
+        self._agent_list: List[TFAgent] = self._unified_agent.agent_list
         self._number_of_agents = len(self._agent_list)
 
         ts = self._agent_list[0].time_step_spec
@@ -259,7 +276,9 @@ class MultipleAgents(tf.Module):
         # self._multi_dqn_agent.train(x)
 
         self.collect_policy = MultiAgentSingleModelPolicy(self._multi_dqn_agent.collect_policy,
-                                                          self._agent_list,
+                                                          # self._agent_list,
+                                                          self._unified_agent,
+
                                                           self.train_env.time_step_spec(),
                                                           self.train_env.action_spec(),
                                                           (),
@@ -267,7 +286,8 @@ class MultipleAgents(tf.Module):
                                                           tf.int64,
                                                           True, )
         self.policy = MultiAgentSingleModelPolicy(self._multi_dqn_agent.policy,
-                                                  self._agent_list,
+                                                  # self._agent_list,
+                                                  self._unified_agent,
                                                   self.eval_env.time_step_spec(),
                                                   self.eval_env.action_spec(),
                                                   (),
@@ -323,8 +343,9 @@ class MultipleAgents(tf.Module):
 
         if self.replay_buffer.num_frames() < 24 * self.initial_collect_episodes:
             self.train_env.hard_reset()
-            for agent in self._agent_list:
-                agent.reset_collect_steps()
+            # for agent in self._agent_list:
+            #     agent.reset_collect_steps()
+            self._unified_agent.reset_collect_steps()
             TFDriver(self.train_env,
                      self.collect_policy,
                      [lambda traj: self.replay_buffer.add_batch(self.collect_policy.get_last_trajectory(traj))],
@@ -350,8 +371,9 @@ class MultipleAgents(tf.Module):
         @tf.function
         def train_epoch():
             self.train_env.hard_reset()
-            for agent in self._agent_list:
-                agent.reset_collect_steps()
+            # for agent in self._agent_list:
+            #     agent.reset_collect_steps()
+            self._unified_agent.reset_collect_steps()
             collect_driver.run(self.train_env.reset())
             if config.USE_JIT:
                 return tf.constant([0.0])
@@ -431,8 +453,7 @@ class MultipleAgents(tf.Module):
             if self.best_checkpoint.checkpoint_exists:
                 print('Found Best Policy. Continuing from there...')
         self._metric.reset()
-        for agent in self._agent_list:
-            agent.reset_eval_steps()
+        self._unified_agent.reset_eval_steps()
         self.eval_env.hard_reset()
         if policy_list is None:
             self._eval_driver.run(self.eval_env.reset())
@@ -445,6 +466,8 @@ class MultipleAgents(tf.Module):
                     print(f"Error deleting directory: {e}")
             return self._metric.result()
         else:
+            for agent in self._agent_list:
+                agent.reset_eval_steps()
             policy = self.wrap_policy(policy_list, False)
             driver = TFDriver(self.eval_env,
                               policy,

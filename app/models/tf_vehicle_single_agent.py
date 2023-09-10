@@ -141,9 +141,12 @@ def _calculate_charge_curves(vehicles: tf.Tensor, num_of_vehicles: int, num_of_a
     """
     # print('Tracing vectorized_calculate_charge_curves_2')
     unrolled_tensor = tf.concat((tf.range(12.0, -0.1, -1.0), tf.zeros((12,), tf.float32)), axis=0)
-    t = tf.vectorized_map(lambda t: tf.vectorized_map(lambda t_2: tf.roll(unrolled_tensor, t_2 - 12, axis=0)[0:13],
-                                                      t),
-                          tf.cast(vehicles[..., 2], tf.int32))
+    # t = tf.vectorized_map(lambda t: tf.vectorized_map(lambda t_2: tf.roll(unrolled_tensor, t_2 - 12, axis=0)[0:13],
+    #                                                   t),
+    #                       tf.cast(vehicles[..., 2], tf.int32))
+    t = tf.reshape(tf.vectorized_map(lambda t: tf.roll(unrolled_tensor, t - 12, axis=0)[0:13],
+                                     tf.reshape((tf.cast(vehicles[..., 2], tf.int32)), shape=[-1])),
+                   shape=[num_of_agents, num_of_vehicles, -1])
     temp = tf.repeat([tf.repeat(tf.expand_dims(tf.range(13.0), 0), num_of_vehicles, axis=0)], num_of_agents, axis=0)
     multiplier_tensor = tf.stack((temp,
                                   t),
@@ -210,8 +213,8 @@ def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int, num_of_agents:
                                  axis=-1)
     total_x_axes = tf.repeat([tf.repeat([x_axes], num_of_vehicles, axis=0)], num_of_agents, axis=0)
     x_values = tf.tensor_scatter_nd_update(total_x_axes,
-                                             intersection_ceil,
-                                             chosen_intersections)
+                                           intersection_ceil,
+                                           chosen_intersections)
 
     curve_areas = tfp.math.trapz(chosen_curves, x_values)
     where_x = tf.math.divide_no_nan(curve_areas, diff_curve_areas)
@@ -227,6 +230,7 @@ def _update_priorities(vehicles: tf.Tensor, num_of_vehicles: int, num_of_agents:
     mask = tf.cast(tf.less(0, intersection_gather_index[..., :1]), tf.float32)
     final_probs_update = mask * probs_stacked + (1.0 - mask) * tf.reverse(probs_stacked, [-1])
     return tf.concat((vehicles[..., :5], final_probs_update, vehicles[..., 7:]), axis=-1)
+
 
 # @tf.function
 def update(vehicle: tf.Tensor, num_of_vehicles: int, num_of_agents: int):
@@ -284,11 +288,12 @@ def update_current_charge(charging_coefficient: tf.Tensor,
     residue_cumsum = tf.cumsum(surplus_tensor)
     final_energy = tf.clip_by_value(residue_cumsum, tf.minimum(0.0, surplus_tensor), 0.0) + next_max_energy
     new_energy = vehicles[..., 0] + sign * final_energy
-    new_vehicles = tf.concat((tf.expand_dims(new_energy, axis=1),
+    # new_vehicles = tf.concat((tf.expand_dims(new_energy, axis=1),
+    new_vehicles = tf.concat([tf.expand_dims(new_energy, axis=-1),
                               vehicles[..., 1:2],
                               tf.clip_by_value(vehicles[..., 2:3] - 1.0, 0.0, 24.0),
-                              vehicles[..., 3:]),
-                             axis=1)
+                              vehicles[..., 3:]],
+                             axis=-1)
     return update(new_vehicles, num_of_vehicles, num_of_agents)
 
 
@@ -307,4 +312,4 @@ def update_emergency_demand(vehicles: tf.Tensor):
                       zeros,
                       vehicles[..., 11:12] - min_discharge,
                       zeros),
-                     axis=1)
+                     axis=-1)

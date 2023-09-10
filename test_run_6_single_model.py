@@ -1,3 +1,4 @@
+import itertools
 import json
 import math
 import sys
@@ -14,7 +15,8 @@ import config
 from app.abstract.tf_single_agent_single_model import create_single_agent
 from app.models.tf_energy_3 import EnergyCurve
 from app.models.tf_pwr_env_5 import TFPowerMarketEnv
-from app.policies.multiple_tf_agents_single_model import MultipleAgents
+# from app.policies.multiple_tf_agents_single_model import MultipleAgents
+from app.policies.multiple_tf_agents_unified_agent import MultipleAgents
 from app.policies.tf_smarter_charger import SmartCharger
 from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
 # from config import NUMBER_OF_AGENTS, MAX_BUFFER_SIZE, AVG_CHARGING_RATE
@@ -158,22 +160,22 @@ agent_list = []
 # offset = False
 
 gpus = tf.config.list_physical_devices('GPU')
-successful_gpu_division = False
-if gpus:
-    try:
-        gpu_mem = 15 * 1024 - tf.config.experimental.get_memory_info('GPU:0')
-        num_devices = NUMBER_OF_AGENTS + 1
-        tf.config.set_logical_device_configuration(
-            gpus[0],
-            [tf.config.LogicalDeviceConfiguration(memory_limit=(gpu_mem - 1024) / num_devices)] * (num_devices))
-        logical_gpus = tf.config.list_logical_devices('GPU')
-        print(len(gpus), "Physical GPU,", len(logical_gpus), "Logical GPUs")
-    except RuntimeError as e:
-        # Virtual devices must be set before GPUs have been initialized
-        print(e)
-    successful_gpu_division = True
+# successful_gpu_division = False
+# if gpus:
+#     try:
+#         gpu_mem = 15 * 1024 - tf.config.experimental.get_memory_info('GPU:0')
+#         num_devices = NUMBER_OF_AGENTS + 1
+#         tf.config.set_logical_device_configuration(
+#             gpus[0],
+#             [tf.config.LogicalDeviceConfiguration(memory_limit=(gpu_mem - 1024) / num_devices)] * (num_devices))
+#         logical_gpus = tf.config.list_logical_devices('GPU')
+#         print(len(gpus), "Physical GPU,", len(logical_gpus), "Logical GPUs")
+#     except RuntimeError as e:
+#         # Virtual devices must be set before GPUs have been initialized
+#         print(e)
+#     successful_gpu_division = True
 for i in range(NUMBER_OF_AGENTS):
-    with tf.device(f'GPU:{i}' if successful_gpu_division else 'CPU:0'):
+    with tf.device(f'GPU:0' if gpus else 'CPU:0'):
         if i % 3 == 2:
             offset = True
         else:
@@ -230,7 +232,7 @@ else:
         eval_avg_vehicle_list += vehicles.avg_vehicles_list if i % 3 != 2 else offset_vehicles.avg_vehicles_list
     # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
-with tf.device(f'GPU:{NUMBER_OF_AGENTS}' if successful_gpu_division else 'CPU:0'):
+with tf.device(f'GPU:0' if gpus else 'CPU:0'):
     energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
     energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
@@ -272,10 +274,10 @@ with tf.device(f'GPU:{NUMBER_OF_AGENTS}' if successful_gpu_division else 'CPU:0'
 # data = create_data()
 # with open('data/vehicles_constant_shape_offset.json', 'w') as f:
 #     json.dump(data.tolist(), f)
-multi_agent = MultipleAgents(train_env,
-                             eval_env,
-                             agent_list,
-                             ckpt_dir, )
+    multi_agent = MultipleAgents(train_env,
+                                 eval_env,
+                                 agent_list,
+                                 ckpt_dir, )
 # SmartCharger(0.5, num_actions, single_agent_time_step_spec))
 
 # variable_list = list(itertools.chain.from_iterable([module.variables if isinstance(module.variables, tuple) or \
@@ -304,12 +306,12 @@ else:
     return_list = []
     # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
     eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in multi_agent._agent_list]
-    # for i in [1] + list(range(5, 101, 5)):
-    #     i /= 100
-    #     for policy in eval_policy:
-    #         policy.threshold = i
-    #     return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
-    # print(return_list)
+    for i in [1] + list(range(5, 101, 5)):
+        i /= 100
+        for policy in eval_policy:
+            policy.threshold = i
+        return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
+    print(return_list)
     print(multi_agent.eval_policy())
     # input("Press Enter to continue...")
     st = time()

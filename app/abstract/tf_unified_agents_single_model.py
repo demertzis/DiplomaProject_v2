@@ -23,22 +23,23 @@ class UnifiedAgent(tf.Module):
                 single_agent_list]):
             raise Exception('All agents must have equal garage capacities')
         self._num_of_agents = len(single_agent_list)
-        self._num_of_actions = tf.constant([agent._num_of_actions for agent in single_agent_list])
+        self._num_of_actions = tf.expand_dims(
+            tf.constant([agent._num_of_actions for agent in single_agent_list], tf.float32), axis=-1)
         self._train_parking = Parking(self._capacity_train_garage, self._num_of_agents, 'train')
         self._eval_parking = Parking(self._capacity_eval_garage, self._num_of_agents, 'eval')
         self._grouped_agent_list = []
         grouped_agent_numbers = []
         grouped_coefficient_function_list = []
         while single_agent_list:
-            i = 0
             temp_agent = single_agent_list.pop(0)
-            i += 1
             self._grouped_agent_list.append(temp_agent)
+            i = 1
             temp_fun = temp_agent.coefficient_function
-            for index, agent in enumerate(single_agent_list):
+            for agent in single_agent_list[:]:
                 if agent.coefficient_function == temp_fun:
+                    self._grouped_agent_list.append(agent)
+                    single_agent_list.remove(agent)
                     i += 1
-                    self._grouped_agent_list.append(single_agent_list.pop(index))
             grouped_agent_numbers.append(i)
             grouped_coefficient_function_list.append(temp_fun)
         self._generate_vehicles_train = generate_vehicles_single_model(
@@ -128,7 +129,7 @@ class UnifiedAgent(tf.Module):
                               augmented_obs,
                               parking_fields,
                               collect)
-        return load
+        return tf.squeeze(load)
 
     def get_observation(self, observation: SpecTensorOrArray, step_type: SpecTensorOrArray,
                         collect=True) -> SpecTensorOrArray:
@@ -154,12 +155,12 @@ class UnifiedAgent(tf.Module):
     def _calculate_vehicle_distribution(self, train: bool):
         # print('Tracing calculate_vehicle_distribution')
         if train:
-            departure_tensor = tf.cast(self._train_parking._vehicles[..., 2], tf.float32)
+            departure_tensor = tf.cast(self._train_parking._vehicles[..., 2:3], tf.float32)
             capacity = self._capacity_train_garage
         else:
-            departure_tensor = tf.cast(self._eval_parking._vehicles[..., 2], tf.float32)
+            departure_tensor = tf.cast(self._eval_parking._vehicles[..., 2:3], tf.float32)
             capacity = self._capacity_eval_garage
-        fn = lambda t: tf.reduce_sum(tf.clip_by_value(departure_tensor - t, 0.0, 1.0), axis=-1)
+        fn = lambda t: tf.reduce_sum(tf.clip_by_value(departure_tensor - t, 0.0, 1.0), axis=-2)
         departure_distribution_tensor = tf.vectorized_map(fn, tf.range(0.0, 12.0))
         return departure_distribution_tensor / capacity
 
@@ -203,17 +204,17 @@ class UnifiedAgent(tf.Module):
                                                       tf.maximum(temp_sign * next_max_charge,
                                                                  tf.negative(temp_sign) * next_max_discharge)
                                                       )
-        return tf.stack([max_acceptable_coefficient,
-                         threshold_coefficient,
-                         tf.negative(min_acceptable_coefficient),
-                         *tf.unstack(self._calculate_vehicle_distribution(train)),
-                         next_max_charge / max_charging_rate / capacity,
-                         next_min_charge / max_charging_rate / capacity,
-                         next_max_discharge / max_discharging_rate / capacity,
-                         next_min_discharge / max_discharging_rate / capacity,
-                         parking.charge_mean_priority,
-                         parking.discharge_mean_priority, ],
-                        axis=-1), parking
+        return tf.concat([max_acceptable_coefficient,
+                          threshold_coefficient,
+                          tf.negative(min_acceptable_coefficient),
+                          *tf.unstack(self._calculate_vehicle_distribution(train)),
+                          next_max_charge / max_charging_rate / capacity,
+                          next_min_charge / max_charging_rate / capacity,
+                          next_max_discharge / max_discharging_rate / capacity,
+                          next_min_discharge / max_discharging_rate / capacity,
+                          parking.charge_mean_priority,
+                          parking.discharge_mean_priority, ],
+                         axis=-1), parking
 
     @tf.function(jit_compile=True)
     def _get_load(self, action_step: tf.Tensor, observation: tf.Tensor, parking_fields, collect_mode=True):
@@ -222,9 +223,10 @@ class UnifiedAgent(tf.Module):
         # parking_fields = parking.return_fields()
         # observation = tf.cast(observation, tf.float16)
         # length = tf.constant((self._num_of_actions - 1), dtype=tf.float32)
-        length = self._num_of_actions - 1
+        length = self._num_of_actions - 1.0
         start = self._num_of_multi_agent_observation_elements
-        max_coefficient, threshold_coefficient, min_coefficient = tf.unstack(observation[..., start:start + 3], axis=-1)
+        max_coefficient, threshold_coefficient, min_coefficient = tf.unstack(
+            tf.expand_dims(observation[..., start:start + 3], axis=-1), axis=-2)
         # max_coefficient = observation[..., 13]
         # threshold_coefficient = observation[..., 14]
         # min_coefficient =observation[..., 15]
