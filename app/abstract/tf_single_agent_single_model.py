@@ -1,4 +1,5 @@
 import math
+import os.path
 from typing import Callable, List
 
 import tensorflow as tf
@@ -9,6 +10,7 @@ from tf_agents.typing import types
 from tf_agents.typing.types import SpecTensorOrArray
 from tf_agents.utils.common import Checkpointer
 
+import config
 from app.abstract.utils import MyCheckpointer
 from app.models.tf_parking_10 import Parking
 from app.utils import generate_vehicles_constant_shape
@@ -109,10 +111,36 @@ def create_single_agent(cls: type,
                 agent=self,
                 # policy=self.policy,
             )
+
+            # num_of_agents = int("".join(item for item in list(filter(str.isdigit, ckpt_dir.split('/')[1]))))
+            # if num_of_agents > 3:
+
+            if not self.checkpointer.checkpoint_exists:
+                num_of_agents = int("".join(item for item in list(filter(str.isdigit, ckpt_dir.split('/')[1]))))
+                if num_of_agents > 3:
+                    ckpt_folders = ckpt_dir.split('/')
+                    ckpt_folders[1] = '3_AGENTS'
+                    new_ckpt_dir = "/".join(ckpt_folders)
+                    new_ckpt_dir = "best_" + new_ckpt_dir if config.START_FROM_BEST else new_ckpt_dir
+                    ckpt_agent_name = "Agent-" + str(((self._agent_id - 1) % 3) + 1)
+                    new_ckpt_agent_dir = '/'.join([new_ckpt_dir, ckpt_agent_name])
+                    if os.path.exists(new_ckpt_agent_dir):
+                        start_checkpoint = Checkpointer(
+                            ckpt_dir=new_ckpt_agent_dir,
+                            max_to_keep=1,
+                            agent=self,
+                        )
+                        if start_checkpoint.checkpoint_exists:
+                            print("Loading {} from checkpoint of Agent-{} in the 3-Agent case".format
+                                  (self._name,
+                                   ((self._agent_id - 1) % 3) + 1))
+            else:
+                self.scale_bias(0.2)
+
             self.best_checkpointer = MyCheckpointer(
                 ckpt_dir='/'.join(['best_' + ckpt_dir, self._name]),
                 max_to_keep=1,
-                policy=self.policy,
+                agent=self,
                 # policy=self.policy,
             )
             # self.policy.action = self._action_wrapper(self.policy.action, False)
@@ -528,6 +556,10 @@ def create_single_agent(cls: type,
                            parking_fields.next_max_charge - parking_fields.next_min_charge,
                            parking_fields.next_max_discharge - parking_fields.next_min_discharge,
                            False)
+
+        def scale_bias(self, scale: int):
+            weights = self._q_network.layers[-1].variables[1]
+            weights.assign_add(tf.math.abs(weights) * scale)
 
         def wrap_external_policy_action(self, action, collect: bool):
             return self._action_wrapper(action, collect)

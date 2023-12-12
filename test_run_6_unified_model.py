@@ -15,7 +15,7 @@ import config
 from app.abstract.tf_single_agent_single_model import create_single_agent
 from app.models.tf_energy_3 import EnergyCurve
 from app.models.tf_pwr_env_5 import TFPowerMarketEnv
-from app.policies.multiple_tf_agents_single_model import MultipleAgents
+from app.policies.multiple_tf_agents_unified_agent import MultipleAgents
 from app.policies.tf_smarter_charger import SmartCharger
 
 from app.utils import VehicleDistributionListConstantShape, calculate_avg_distribution_constant_shape
@@ -311,8 +311,8 @@ else:
     #         policy.threshold = i
     #     return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
     # print(return_list)
-    print(multi_agent.eval_policy())
-    input("Press Enter to continue...")
+    # print(multi_agent.eval_policy())
+    # input("Press Enter to continue...")
     st = time()
     multi_agent.train()
     print('Expired time: {}'.format(time() - st))

@@ -1,31 +1,34 @@
-import json
-import math
+import datetime
 
+import numpy as np
 import tensorflow as tf
 
-from app.models.tf_parking_single_agent import Parking
-from app.utils import generate_vehicles_single_model as generator, VehicleDistributionListConstantShape
-from config import VEHICLE_BATTERY_CAPACITY, VEHICLE_MIN_CHARGE
+from app.policies.tf_reward_functions import new_reward_proportional
 
 tf.config.run_functions_eagerly(True)
 
-with open('data/vehicles_constant_shape.json') as file:
-    vehicles = VehicleDistributionListConstantShape(json.loads(file.read()))
+data = []
+raw_y = [[]]
+x = []
+with open('data/randomized_data.csv') as csv:
+    counter = 0
+    max_val = 0.0
+    min_val = 1000.0
+    for line in csv.readlines():
+        date, value, value_intra_day = line.split(",")
+        date = datetime.datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
+        value = float(value)
+        value_intra_day = float(value_intra_day)
+        # self._normalizing_coefficient = max(value, value_intra_day, self._normalizing_coefficient)
+        max_val = max(value, value_intra_day, max_val)
+        min_val = min(value, value_intra_day, min_val)
+        data.append((date, value, value_intra_day))
+        x.append(date)
+        if counter == 24:
+            counter = 0
+            raw_y.append([])
+        raw_y[-1].append((value, value_intra_day))
+        counter += 1
 
-car_gen = generator([lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5,
-                     lambda x: tf.math.sin(math.pi / 6.0 * (x + 3.0)) / 2.0 + 0.5],
-                    [4, 2],
-                    100
-                    )
-# t = car_gen(tf.constant(12, tf.int64))
-t = tf.repeat([tf.constant(vehicles[0])], 6, axis=0)
-max_min_charges = tf.repeat(tf.expand_dims(tf.repeat([[VEHICLE_BATTERY_CAPACITY, VEHICLE_MIN_CHARGE] + [0.0] * 8],
-                                                     100,
-                                                     axis=0), axis=0),
-                            6,
-                            axis=0)
-parking = Parking(100, 6, 'A')
 
-parking.assign_vehicles(tf.concat((t, max_min_charges), axis=-1))
-f = parking.return_fields()
 print('')

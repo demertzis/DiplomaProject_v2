@@ -285,7 +285,7 @@ def update_current_charge(charging_coefficient: tf.Tensor,
                           (1.0 + priority - normalization_constant)) * \
                          sign
     surplus_tensor = new_vehicle_energy - next_max_energy
-    residue_cumsum = tf.cumsum(surplus_tensor)
+    residue_cumsum = tf.cumsum(surplus_tensor, axis=-1)
     final_energy = tf.clip_by_value(residue_cumsum, tf.minimum(0.0, surplus_tensor), 0.0) + next_max_energy
     new_energy = vehicles[..., 0] + sign * final_energy
     # new_vehicles = tf.concat((tf.expand_dims(new_energy, axis=1),

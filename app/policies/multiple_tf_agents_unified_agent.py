@@ -18,7 +18,7 @@ from tf_agents.trajectories import time_step as ts, TimeStep, PolicyStep
 from tf_agents.trajectories.trajectory import Trajectory
 from tf_agents.typing import types
 from tf_agents.utils import common
-
+from app.policies.multiple_tf_agents_single_model import MultiAgentSingleModelPolicy as MultiAgentPolicySingleAgent
 import config
 from app.abstract.multi_dqn import MultiDdqnAgent
 from app.abstract.tf_unified_agents_single_model import UnifiedAgent
@@ -42,7 +42,7 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         if isinstance(agent_list, UnifiedAgent):
             self._use_unified_agent = True
             self._num_of_agents = agent_list._num_of_agents
-            self._agent_list = [agent_list]
+            self._agent_list: List[UnifiedAgent] = [agent_list]
         else:
             self._use_unified_agent = False
             self._num_of_agents = len(agent_list)
@@ -64,7 +64,7 @@ class MultiAgentSingleModelPolicy(TFPolicy):
                 single_agent_observation_shape = self._agent_list[0].agent_list[0].time_step_spec.observation.shape
             else:
                 single_agent_observation_shape = self._agent_list[0].time_step_spec.observation.shape
-            self._last_observation = tf.Variable(tf.zeros(shape=[1, self._num_of_agents] +\
+            self._last_observation = tf.Variable(tf.zeros(shape=[1, self._num_of_agents] + \
                                                                 single_agent_observation_shape,
                                                           dtype=self.collect_data_spec.observation.dtype))
             # self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
@@ -93,10 +93,11 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         single_model_action_vector = self._policy.action(time_step._replace(observation=batched_observation))
         agent_action = [[]] * len(self._agent_list)
         for i in range(len(self._agent_list)):
-            agent_action[i] = self._agent_list[i].get_action(single_model_action_vector.action[0][i],
-                                                             stacked_agent_obs[i],
-                                                             obs_info[i],
-                                                             self._collect)
+            agent_action[i] = self._agent_list[i].get_action(
+                tf.expand_dims(single_model_action_vector.action[0], axis=-1),
+                stacked_agent_obs[i],
+                obs_info[i],
+                self._collect)
         stacked_agent_action = tf.stack(agent_action, axis=0)
         if not self._use_unified_agent:
             batched_action = tf.expand_dims(stacked_agent_action, axis=0)
@@ -194,7 +195,8 @@ class MultipleAgents(tf.Module):
                                                                                     dim=self._number_of_agents))
 
         # multi_agent_action_spec = tensor_spec.add_outer_dims_nest(agents_list[0].action_spec, (self._number_of_agents,))
-        multi_agent_action_spec = tensor_spec.add_outer_dims_nest(self._agent_list[0].action_spec, (self._number_of_agents,))
+        multi_agent_action_spec = tensor_spec.add_outer_dims_nest(self._agent_list[0].action_spec,
+                                                                  (self._number_of_agents,))
 
         self._collect_data_context = data_converter.DataContext(
             time_step_spec=multi_agent_time_step_spec,
@@ -433,7 +435,7 @@ class MultipleAgents(tf.Module):
 
         policy = TempPolicy()
         env = self.train_env if collect else self.eval_env
-        return MultiAgentSingleModelPolicy(policy,
+        return MultiAgentPolicySingleAgent(policy,
                                            self._agent_list,
                                            env.time_step_spec(),
                                            env.action_spec(),

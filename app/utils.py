@@ -10,20 +10,20 @@ import numpy as np
 # from tf_agents.agents.dqn.dqn_agent import DdqnAgent
 # from tf_agents.networks import sequential
 import tensorflow as tf
-from intersect import intersection
+# from intersect import intersection
 from tf_agents.agents import DqnAgent
 
 from app.models.tf_utils import my_round, my_round_vectorized, my_round_16
 
 
-def find_intersection(x1, y1, x2, y2) -> Union[Tuple[float, float], None]:
-    x, y = intersection(x1, y1, x2, y2)
-    intersections = list(filter(lambda val: val[0] > 0, set(zip(x, y))))
-
-    if len(intersections) == 0:
-        return None
-
-    return intersections[0]
+# def find_intersection(x1, y1, x2, y2) -> Union[Tuple[float, float], None]:
+#     x, y = intersection(x1, y1, x2, y2)
+#     intersections = list(filter(lambda val: val[0] > 0, set(zip(x, y))))
+#
+#     if len(intersections) == 0:
+#         return None
+#
+#     return intersections[0]
 
 
 def find_intersection_v2(x1, y1, c) -> Union[Tuple[tf.Tensor, tf.Tensor], None]:

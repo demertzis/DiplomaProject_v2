@@ -3,14 +3,14 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
-        <entry key="/colab_data.csv">
+        <entry key="/data/data_sorted_by_date.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
             </Attribute>
           </value>
         </entry>
-        <entry key="/data/data_sorted_by_date.csv">
+        <entry key="/data/randomized_data.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

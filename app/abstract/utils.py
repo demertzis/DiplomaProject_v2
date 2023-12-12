@@ -9,7 +9,8 @@ from tf_agents.environments import tf_environment
 from tf_agents.environments.py_environment import PyEnvironment
 import tensorflow as tf
 from tf_agents.networks import network, Network
-from tensorflow.python.distribute import distribution_strategy_context as ds
+# from tensorflow.python.distribute import distribution_strategy_context as ds
+from tensorflow.python.distribute import distribute_lib
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import array_ops
@@ -360,7 +361,7 @@ def my_compute_average_loss(per_example_loss,
           labels, predictions)
 
       # Compute loss that is scaled by sample_weight and by global batch size.
-      return tf.nn.compute_average_loss(
+          return tf.nn.compute_average_loss(
           per_example_loss,
           sample_weight=sample_weight,
           global_batch_size=GLOBAL_BATCH_SIZE)
@@ -382,7 +383,7 @@ def my_compute_average_loss(per_example_loss,
       per_example_loss = losses_util.scale_losses_by_sample_weight(
           per_example_loss, sample_weight)
       per_example_loss = math_ops.cast(per_example_loss, input_dtype)
-    num_replicas = ds.get_strategy().num_replicas_in_sync
+    num_replicas = distribute_lib.get_strategy().num_replicas_in_sync
     per_replica_batch_size = array_ops.shape_v2(per_example_loss)[0]
     global_batch_size = per_replica_batch_size * num_replicas
 

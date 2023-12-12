@@ -86,6 +86,10 @@ class MultiDdqnAgent(DdqnAgent):
         else:
             raise Exception('num_of_agents argument must be provided but it wasn\'t' )
         super(MultiDdqnAgent, self).__init__(*args, **kwargs)
+
+    @property
+    def optimizer(self):
+        return self._optimizer
     def _check_action_spec(self, action_spec):
         flat_action_spec = tf.nest.flatten(action_spec)
 
@@ -400,6 +404,11 @@ class MultiDdqnAgent(DdqnAgent):
     #         return tf_agent.LossInfo(total_loss, DqnLossInfo(td_loss=td_loss,
     #                                                          td_error=td_error))
 
+    def retrace_wrapper(self, func):
+        def temp_func(i: int, *args, **kwargs):
+            print(i)
+            return func(*args, **kwargs)
+        return temp_func
 
     def _train(self, experience, weights):
         """

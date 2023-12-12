@@ -21,7 +21,6 @@ from tf_agents.utils import common
 
 import config
 from app.abstract.multi_dqn import MultiDdqnAgent
-from app.abstract.tf_unified_agents_single_model import UnifiedAgent
 from app.abstract.utils import MyNetwork, my_discounted_return, my_index_with_actions, my_to_n_step_transition, \
     MyCheckpointer
 from app.models.tf_pwr_env_2 import TFPowerMarketEnv
@@ -56,7 +55,7 @@ class MultiAgentSingleModelPolicy(TFPolicy):
         # self.gpu_split = len(tf.config.list_logical_devices('GPU')) + 1 == self._num_of_agents
         if collect:
             single_agent_observation_shape = self._agent_list[0].time_step_spec.observation.shape
-            self._last_observation = tf.Variable(tf.zeros(shape=[1, self._num_of_agents] +\
+            self._last_observation = tf.Variable(tf.zeros(shape=[1, self._num_of_agents] + \
                                                                 single_agent_observation_shape,
                                                           dtype=self.collect_data_spec.observation.dtype))
             self._last_action = tf.Variable(tf.zeros(shape=[1] + self.collect_data_spec.action.shape,
@@ -150,7 +149,9 @@ class MultipleAgents(tf.Module):
     batch_size = 128  # @param {type:"integer"}
     # batch_size = 1  # @param {type:"integer"}
     learning_rate = 1e-3  # @param {type:"number"}
-    log_interval = 24 * 10  # @param {type:"integer"}
+
+    _train_from_best_checkpoint = config.START_FROM_BEST
+    _per_agent_train_steps = 5
 
     def __init__(self, train_env: TFPowerMarketEnv,
                  eval_env: TFPowerMarketEnv,
@@ -177,7 +178,8 @@ class MultipleAgents(tf.Module):
                                                                                     dim=self._number_of_agents))
 
         # multi_agent_action_spec = tensor_spec.add_outer_dims_nest(agents_list[0].action_spec, (self._number_of_agents,))
-        multi_agent_action_spec = tensor_spec.add_outer_dims_nest(self._agent_list[0].action_spec, (self._number_of_agents,))
+        multi_agent_action_spec = tensor_spec.add_outer_dims_nest(self._agent_list[0].action_spec,
+                                                                  (self._number_of_agents,))
 
         self._collect_data_context = data_converter.DataContext(
             time_step_spec=multi_agent_time_step_spec,
@@ -228,10 +230,10 @@ class MultipleAgents(tf.Module):
         tf_agents.trajectories.trajectory.to_n_step_transition = my_to_n_step_transition
 
         learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=1e-4,
-            decay_steps=24000,
+            initial_learning_rate=1e-3,
+            decay_steps=240000,
             staircase=True,
-            decay_rate=0.9)
+            decay_rate=0.8)
 
         kwargs = {
             'num_of_agents': self._number_of_agents,
@@ -244,17 +246,18 @@ class MultipleAgents(tf.Module):
             'q_network': single_model_q_network,
             'target_q_network': single_model_target_q_network,
             # 'optimizer': tf.keras.optimizers.Adam(learning_rate=1e-4),
-            'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
+            # 'optimizer': tf.keras.optimizers.Adam(learning_rate=learning_rate),
+            'optimizer': tf.keras.optimizers.AdamW(learning_rate=1e-3),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
-            # 'epsilon_greedy': 0.1,
-            'epsilon_greedy': None,
-            'boltzmann_temperature': 0.4,
-            'target_update_tau': 0.1,
-            'target_update_period': 2400,
+            'epsilon_greedy': 0.05,
+            # 'epsilon_greedy': None,
+            # 'boltzmann_temperature': 0.02,
+            'target_update_tau': 1.0,
+            'target_update_period': 100,
         }
-        self._multi_dqn_agent = MultiDdqnAgent(**kwargs)
 
-        # x = tensor_spec.sample_spec_nest(self.collect_data_spec, outer_dims=(1, 2))
+        self._multi_dqn_agent = MultiDdqnAgent(**kwargs)
+        # x = tensor_spec.sample_s15pec_nest(self.collect_data_spec, outer_dims=(1, 2))
         # x = x.replace(step_type=tf.ones_like(x.step_type, dtype=tf.int64))
         # self._multi_dqn_agent.train(x)
 
@@ -310,10 +313,21 @@ class MultipleAgents(tf.Module):
         return self._collect_data_context.trajectory_spec
 
     def train(self):
+    # def train(self, lr = 1e-3):
+
         print('Latest trained policy evaluation: {}'.format(self.eval_policy().numpy()))
         best_avg_return = self.eval_policy(best=True)
+        # best_avg_return = 0.0
         print('Best policy evaluation: {}'.format(best_avg_return.numpy()))
         # input('Press Enter to continue...')
+
+        # tf.keras.backend.set_value(self._multi_dqn_agent.optimizer.learning_rate, lr)
+        # print('Learning rate: {}'.format(lr))
+
+        if self._train_from_best_checkpoint:
+            self.best_checkpoint.initialize_or_restore()
+            if self.best_checkpoint.checkpoint_exists:
+                print("Continuing from best checkpoint with reward: {}".format(best_avg_return))
 
         dataset = self.replay_buffer.as_dataset(
             num_parallel_calls=3,
@@ -345,13 +359,22 @@ class MultipleAgents(tf.Module):
                                       self.collect_policy.get_last_trajectory(traj)),
                                    lambda traj: train_step()],
                                   max_episodes=self.epochs,
-                                  disable_tf_function=False)
+                                  # disable_tf_function=False)
+                                  disable_tf_function=True)
 
         @tf.function
-        def train_epoch():
+        def train_epoch(retrace_int: int = None):
+            print(retrace_int + 1)
             self.train_env.hard_reset()
             for agent in self._agent_list:
                 agent.reset_collect_steps()
+            # TFDriver(self.train_env,
+            #          self.collect_policy,
+            #          [lambda traj: self.replay_buffer.add_batch(
+            #              self.collect_policy.get_last_trajectory(traj)),
+            #           lambda traj: train_step()],
+            #          max_episodes=self.epochs,
+            #          disable_tf_function=False).run(self.train_env.reset())
             collect_driver.run(self.train_env.reset())
             if config.USE_JIT:
                 return tf.constant([0.0])
@@ -361,8 +384,24 @@ class MultipleAgents(tf.Module):
         # loss_acc = [0.0] * self._number_of_agents
         epoch_st = time.time()
 
+        for i in range(self._number_of_agents):
+            self._multi_dqn_agent._q_network.layers[0].layers[2 + i].trainable = False
+
+        agent_trainable = -1
+
         for i in range(1, self.num_iterations + 1):
-            avg_return = train_epoch()
+            # agent_trainable = ((i -1) // 1200) % self._number_of_agents
+
+            new_agent_trainable = ((i - 1) // self._per_agent_train_steps) % self._number_of_agents
+            if agent_trainable != new_agent_trainable:
+                self._multi_dqn_agent._q_network.layers[0].layers[2 + agent_trainable].trainable = False
+                self._multi_dqn_agent._q_network.layers[0].layers[2 + new_agent_trainable].trainable = True
+                self._multi_dqn_agent._optimizer._built = False
+                self._multi_dqn_agent._optimizer.build(self._multi_dqn_agent._q_network.trainable_weights)
+                agent_trainable = new_agent_trainable
+
+            avg_return = train_epoch(((i - 1) // self._per_agent_train_steps) % self._number_of_agents)
+
             print('Epoch: ', i, '            Avg_return = ', avg_return.numpy())
             print('Avg Train Loss: ', self._total_loss.value().numpy())
             epoch_et = time.time()
@@ -380,12 +419,13 @@ class MultipleAgents(tf.Module):
                     self.best_checkpoint.save(train_counter)
                     # for agent in self._agent_list:
                     #     agent.checkpoint_save(train_counter, True)
-            elif i % 100 == 0:
+            if i % 500 == 0:
                 # self.global_step.assign(self.collect_policy.global_step)
                 train_counter = self._multi_dqn_agent.train_step_counter
                 self.checkpoint.save(train_counter)
                 for agent in self._agent_list:
                     agent.checkpoint_save(train_counter)
+
         train_counter = self._multi_dqn_agent.train_step_counter
         self.checkpoint.save(train_counter)
         for agent in self._agent_list:

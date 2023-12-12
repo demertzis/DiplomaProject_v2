@@ -86,9 +86,10 @@ class Parking:
         self._max_charging_rate_32 = tf.cast(self._max_charging_rate, tf.float32)
         self._max_discharging_rate_32 = tf.cast(self._max_discharging_rate, tf.float32)
 
-    @property
-    def vehicles(self):
-        return self._vehicles.value()[:self._num_of_vehicles.value()]
+#TODO fix it, in unified case it should return a ragged tensor
+    # @property
+    # def vehicles(self):
+    #     return self._vehicles.value()[:self._num_of_vehicles.value()]
 
     def return_fields(self):
         return ParkingFields(*self._update_parking_state(self._vehicles))
