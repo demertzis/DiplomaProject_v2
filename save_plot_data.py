@@ -28,6 +28,7 @@ try:
     argument_num_of_agents = int(sys.argv[1])
 except:
     argument_num_of_agents = config.NUMBER_OF_AGENTS
+print('Ploting {} Agents'.format(argument_num_of_agents))
 NUMBER_OF_AGENTS = argument_num_of_agents
 # tf.debugging.enable_check_numerics()
 reward_function_array = [rf.vanilla,
@@ -38,7 +39,8 @@ reward_function_array = [rf.vanilla,
                          rf.new_reward_buyers_biased,
                          rf.new_reward_sellers_biased,
                          rf.new_reward_proportional_punishing,
-                         rf.new_reward_equal]
+                         rf.new_reward_equal,
+                         ]
 try:
     reward_function = reward_function_array[int(sys.argv[2])]
 except:
@@ -126,36 +128,14 @@ try:
 except OSError:
     offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
 
-# q_net = sequential.Sequential(layers_list)
-# q_net.build(input_shape=(1,35))
-# offset_q_net = sequential.Sequential(layers_list)
-# offset_q_net.build(input_shape=(1,35))
-
-
 learning_rate = 3e-4
-# learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
-#     initial_learning_rate=1e-2,
-#     decay_steps=9600,
-#     staircase=True,
-#     decay_rate=0.9)
-
-# learning_rate = tf.keras.optimizers.schedules.CosineDecayRestarts(
-#     initial_learning_rate=5e-3,
-#     first_decay_steps=2400,
-#     t_mul=2.0,
-#     alpha=0.5,
-#     m_mul=0.8)
-
-# reward_function = rf.vanilla
-# reward_function = rf.punishing_uniform
-# reward_function = rf.punishing_non_uniform_non_individually_rational
-# reward_function = rf.punishing_non_uniform_individually_rational
-reward_name = reward_function.__name__
+reward_name = reward_function.__name__ if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
 
 ckpt_dir = '/'.join(['checkpoints_2',
                      str(NUMBER_OF_AGENTS) +
                      '_AGENTS',
                      reward_name])
+
 if NUMBER_OF_AGENTS == 1 and single_agent_offset:
     ckpt_dir += '_OFFSET'
 coefficient_function = lambda x: tf.math.sin(math.pi / 6.0 * x) / 2.0 + 0.5
@@ -253,14 +233,6 @@ with tf.device(f'GPU:0' if gpus else 'CPU:0'):
     energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
 
     spec = single_agent_time_step_spec
-    # env_time_step_spec = TimeStep(step_type=tensor_spec.add_outer_dim(spec.step_type, 1),
-    #                               discount=tensor_spec.add_outer_dim(spec.discount, 1),
-    #                               reward=tensor_spec.add_outer_dim(spec.reward, NUMBER_OF_AGENTS),
-    #                               observation=tensor_spec.BoundedTensorSpec(shape=(13,),
-    #                                                                         dtype=tf.float32,
-    #                                                                         minimum=-1.,
-    #                                                                         maximum=1.))
-    # env_action_spec = tensor_spec.TensorSpec(shape=(NUMBER_OF_AGENTS,), dtype=tf.float32, name="action")
     train_env = TFPowerMarketEnv(spec,
                                  # env_action_spec,
                                  energy_curve_train,
@@ -276,30 +248,14 @@ with tf.device(f'GPU:0' if gpus else 'CPU:0'):
                                 [AVG_CHARGING_RATE * v for v in eval_avg_vehicle_list.numpy()],
                                 False)
 
-    # def create_data():
-    #     vehicle_tensor = tf.zeros(shape=(0, 100,3), dtype=tf.float32)
-    #     for i in range(40 * 24):
-    #         vehicle_tensor = tf.concat((vehicle_tensor, tf.expand_dims(agent_list[0].train_vehicles_generator(tf.constant(i % 24, tf.int64)), axis=0)), axis=0)
-    #     return vehicle_tensor.numpy().round(2)
-    # data = create_data()
-    # with open('data/vehicles_constant_shape_offset.json', 'w') as f:
-    #     json.dump(data.tolist(), f)
     base_lr = 1e-4
-    # lr_list = [max(base_lr * 0.01 ** i, 1e-8) for i in range(len(agent_list))]
     lr_list = [ExponentialDecay(1e-4, 1, 0.8), 4e-7, 1e-7]
-    # epochs_per_agent = list(zip(list(range(len(agent_list))), [10] + [1] * (len(agent_list) - 1)))
-    # epochs_per_agent = list(zip(list(range(len(agent_list))), [10] + [1] * (len(agent_list) - 1)))
     epochs_per_agent = [[0, 10]]
     for i in range(1, len(agent_list)):
         temp_list = epochs_per_agent + [[i, 1]]
         epochs_per_agent.reverse()
         epochs_per_agent = temp_list + epochs_per_agent
-        # epochs_per_agent = epochs_per_agent + [[i, 1]] + list.reverse(epochs_per_agent)
 
-    # epochs_per_agent = list(zip(list(range(len(agent_list))), [10] + [1] * (len(agent_list) - 1)))
-
-    # train_scheduler = ConstantDistributionTrainScheduler(lr_list,
-    #                                                      epochs_per_agent)
     train_scheduler = RandomDistributionTrainScheduler(len(agent_list), ExponentialDecay(6e-7, 1, 0.9), 3e-8, 4, 1)
     multi_agent = MultipleAgents(train_env=train_env,
                                  eval_env=eval_env,
@@ -307,50 +263,44 @@ with tf.device(f'GPU:0' if gpus else 'CPU:0'):
                                  ckpt_dir=ckpt_dir,
                                  initial_collect_policy=None,
                                  train_scheduler=train_scheduler)
-# SmartCharger(0.5, num_actions, single_agent_time_step_spec))
 
-# variable_list = list(itertools.chain.from_iterable([module.variables if isinstance(module.variables, tuple) or \
-#                                                                         isinstance(module.variables, list)
-#                                                                      else module.variables()  for module \
-#                                                                                               in multi_agent.submodules]))
-# for var in variable_list:
-#     print(var.device, var.name)
-
-# data = create_train_data(agent_list[0],
-#                          MultiAgentSingleModelPolicy(SmartCharger(0.4, num_actions, single_agent_time_step_spec),
-#                                                      [agent_list[0]],
-#                                                      train_env.time_step_spec(),
-#                                                      train_env.action_spec(),
-#                                                      (),
-#                                                      (),
-#                                                      tf.int64,
-#                                                      True),
-#                          train_env,
-#                          5)
-
-# for agent in agent_list:
-#     agent.scale_bias(0.2)
-
-if config.USE_JIT:
-    st = time()
-    multi_agent.train()
-    print('Expired time: {}'.format(time() - st))
+# print(multi_agent.eval_policy(best=True))
+# plot_actions = True
+# plot_actions = False
+# last_folder = ['actions'] if plot_actions else ['rewards']
+last_folder = ['actions']
+if NUMBER_OF_AGENTS == 1:
+    offset_string = '_offset' if single_agent_offset else ''
+    single_reward = 'vanilla' if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
+    plot_filename = '/'.join(['plots',
+                              str(NUMBER_OF_AGENTS) + '_Agent',
+                              single_reward + offset_string] +
+                             last_folder)
 else:
-    return_list = []
-    # eval_policy = DummyV2G(0.5, num_actions, single_agent_time_step_spec)
-    if config.EVAL_STATIC_STRATEGY:
-        eval_policy = [SmartCharger(0.5, num_actions, single_agent_time_step_spec) for _ in multi_agent._agent_list]
-        for i in [1] + list(range(5, 101, 5)):
-            i /= 100
-            for policy in eval_policy:
-                policy.threshold = i
-            return_list.append((i, multi_agent.eval_policy(eval_policy).numpy()))
-        print(return_list)
+    plot_filename ='/'.join(['plots',
+                             str(NUMBER_OF_AGENTS) + '_Agents',
+                             reward_name] +
+                            last_folder)
+multi_agent.plot_actions(filename=plot_filename,
+                         best=True,
+                         actions=True)
 
-        print(multi_agent.eval_policy())
-        input("Press Enter to continue...")
-    st = time()
-    # for _ in range(20):
-    # multi_agent.plot_actions('plots/temp.csv')
-    multi_agent.train(10)
-    print('Expired time: {}'.format(time() - st))
+# plot_actions = True
+# plot_actions = False
+# last_folder = ['actions'] if plot_actions else ['rewards']
+last_folder = ['rewards']
+if NUMBER_OF_AGENTS == 1:
+    offset_string = '_offset' if single_agent_offset else ''
+    single_reward = 'vanilla' if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
+    plot_filename = '/'.join(['plots',
+                              str(NUMBER_OF_AGENTS) + '_Agent',
+                              single_reward + offset_string] +
+                             last_folder)
+else:
+    plot_filename ='/'.join(['plots',
+                             str(NUMBER_OF_AGENTS) + '_Agents',
+                             reward_name] +
+                            last_folder)
+multi_agent.plot_actions(filename=plot_filename,
+                         best=True,
+                         actions=False)

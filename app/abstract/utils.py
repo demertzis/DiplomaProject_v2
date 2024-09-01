@@ -1,29 +1,34 @@
+import abc
+import bisect
+import itertools
 import logging
-from typing import Sequence, Callable, Any, Optional, Tuple
+import random
+from typing import Tuple, List, Union
 
 import numpy as np
-from tensorflow.python.util.tf_inspect import getfullargspec, ArgSpec, FullArgSpec
-from tf_agents.drivers import driver
-from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
-from tf_agents.environments import tf_environment
-from tf_agents.environments.py_environment import PyEnvironment
 import tensorflow as tf
-from tf_agents.networks import network, Network
+import tf_agents.trajectories.time_step as ts
+from keras.src.optimizers.schedules.learning_rate_schedule import LearningRateSchedule
+from tensorflow.python import util as tf_util  # TF internal
 # from tensorflow.python.distribute import distribution_strategy_context as ds
 from tensorflow.python.distribute import distribute_lib
 from tensorflow.python.framework import ops
-from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import math_ops
 from tensorflow.python.ops.losses import util as losses_util
-from tf_agents.policies import tf_policy
-from tf_agents.trajectories import Trajectory, Transition, policy_step, trajectory
+from tensorflow.python.util.tf_inspect import ArgSpec, FullArgSpec
+from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
+from tf_agents.environments.py_environment import PyEnvironment
+from tf_agents.networks import network, Network
+from tf_agents.trajectories import Trajectory, Transition, policy_step
 from tf_agents.trajectories.trajectory import _validate_rank
 from tf_agents.typing import types
 from tf_agents.utils import composite, common, nest_utils
-import tf_agents.trajectories.time_step as ts
 from tf_agents.utils.common import Checkpointer, AggregatedLosses
-from tensorflow.python import util as tf_util  # TF internal
+
 tf_inspect = tf_util.tf_inspect
+
+
 class MyCheckpointer(Checkpointer):
     def __init__(self, ckpt_dir, max_to_keep=20, **kwargs):
         """A class for making checkpoints.
@@ -54,14 +59,14 @@ class MyCheckpointer(Checkpointer):
         # self._load_status = self._checkpoint.restore(
         #     self._manager.latest_checkpoint)
 
-    def  initialize_or_restore(self, session=None):
+    def initialize_or_restore(self, session=None):
         """
         Modified function to be able to create checkpointer without actually loading the checkpoint on initialization.
         In effect, you need to create the checkpointer (class MyCheckpointer) and call intialize or restore whenever
         you want to load checkpointer
         """
         self._load_status = self._checkpoint.restore(
-                self._manager.latest_checkpoint)
+            self._manager.latest_checkpoint)
         self._load_status.initialize_or_restore(session)
         return self._load_status
 
@@ -95,11 +100,11 @@ def compute_avg_return(environment: PyEnvironment, policy, num_episodes=10):
     # Unpack value
     return avg_return.numpy()[0]
 
+
 # class MyCheckpointer(Checkpointer):
 #     def change_dir(self, new_dir):
 #         if not tf.io.gfile.exists(new_dir):
 #             tf.io.gfile.makedirs(new_dir)
-
 
 
 # Wasn't needed at the end (managed to pass pretrained network by layer extraction)
@@ -107,10 +112,11 @@ class MyNetwork(network.Network):
     '''
     This is a custom wrapper for a non-stateful pre-defined tensorflow model
     '''
+
     def __init__(self,
                  model,
-                 input_spec = None,
-                 _name = None):
+                 input_spec=None,
+                 _name=None):
         '''
 
         :param model: a tf.keras model, can be Functional or Sequential.
@@ -120,8 +126,8 @@ class MyNetwork(network.Network):
         :param _name: (Optional.) Network _name.
         '''
         super(MyNetwork, self).__init__(input_tensor_spec=input_spec,
-                                         state_spec=(),
-                                         name=_name)
+                                        state_spec=(),
+                                        name=_name)
         self.model = model
 
     def copy(self, **kwargs) -> 'MyNetwork':
@@ -148,10 +154,12 @@ class MyNetwork(network.Network):
         model_kwargs.pop('network_state', None)
         return self.model(inputs, **model_kwargs), ()
 
+
 class MyDynamicEpisodeDriver(DynamicEpisodeDriver):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._run_fn = tf.function(jit_compile=True)(self._run)
+
 
 def my_discounted_return(rewards,
                          discounts,
@@ -196,11 +204,11 @@ def my_discounted_return(rewards,
         A tensor with shape `[B]` (or []) representing the discounted returns.
     """
     if not time_major:
-      with tf.name_scope("to_time_major_tensors"):
-          discounts = tf.transpose(discounts, perm=[1, 0, 2])
-          # discounts = tf.transpose(discounts)
-          # rewards = tf.transpose(rewards, perm=[1, 0] + list(range(discounts.shape.rank - 2)))
-          rewards = tf.transpose(rewards, perm=[1, 0, 2])
+        with tf.name_scope("to_time_major_tensors"):
+            discounts = tf.transpose(discounts, perm=[1, 0, 2])
+            # discounts = tf.transpose(discounts)
+            # rewards = tf.transpose(rewards, perm=[1, 0] + list(range(discounts.shape.rank - 2)))
+            rewards = tf.transpose(rewards, perm=[1, 0, 2])
 
     if final_value is None:
         final_value = tf.zeros_like(rewards[-1])
@@ -210,25 +218,26 @@ def my_discounted_return(rewards,
         return accumulated_discounted_reward * discount + reward
 
     if provide_all_returns:
-      returns = tf.nest.map_structure(
-          tf.stop_gradient,
-          tf.scan(
-              fn=discounted_return_fn,
-              elems=(rewards, discounts),
-              reverse=True,
-              initializer=final_value))
+        returns = tf.nest.map_structure(
+            tf.stop_gradient,
+            tf.scan(
+                fn=discounted_return_fn,
+                elems=(rewards, discounts),
+                reverse=True,
+                initializer=final_value))
 
-      if not time_major:
-        with tf.name_scope("to_batch_major_tensors"):
-          returns = tf.transpose(rewards, perm=[1, 0, 2])
+        if not time_major:
+            with tf.name_scope("to_batch_major_tensors"):
+                returns = tf.transpose(rewards, perm=[1, 0, 2])
     else:
-      returns = tf.foldr(
-          fn=discounted_return_fn,
-          elems=(rewards, discounts),
-          initializer=final_value,
-          back_prop=False),
+        returns = tf.foldr(
+            fn=discounted_return_fn,
+            elems=(rewards, discounts),
+            initializer=final_value,
+            back_prop=False),
 
     return tf.stop_gradient(returns[0])
+
 
 def my_index_with_actions(q_values, actions, multi_dim_actions=False):
     """Index into q_values using actions.
@@ -255,24 +264,25 @@ def my_index_with_actions(q_values, actions, multi_dim_actions=False):
     """
     actions = tf.expand_dims(actions, axis=-1)
     if actions.shape.rank is None:
-          raise ValueError('actions should have known rank.')
+        raise ValueError('actions should have known rank.')
     batch_dims = actions.shape.rank
     if multi_dim_actions:
-          # In the multidimensional case, the last dimension of actions indexes the
-          # vector of actions for each batch, so exclude it from the batch dimensions.
-          batch_dims -= 1
+        # In the multidimensional case, the last dimension of actions indexes the
+        # vector of actions for each batch, so exclude it from the batch dimensions.
+        batch_dims -= 1
 
     outer_shape = tf.shape(input=actions)
     batch_indices = tf.meshgrid(
-            *[tf.range(outer_shape[i]) for i in range(batch_dims)], indexing='ij')
+        *[tf.range(outer_shape[i]) for i in range(batch_dims)], indexing='ij')
     batch_indices = [tf.cast(tf.expand_dims(batch_index, -1), dtype=tf.int32)
-                      for batch_index in batch_indices]
+                     for batch_index in batch_indices]
     if not multi_dim_actions:
-          actions = tf.expand_dims(actions, -1)
+        actions = tf.expand_dims(actions, -1)
     # Cast actions to tf.int32 in order to avoid a TypeError in tf.concat.
     actions = tf.cast(actions, dtype=tf.int32)
     action_indices = tf.concat(batch_indices + [actions], -1)
     return tf.gather_nd(q_values, action_indices)
+
 
 def my_aggregate_losses(per_example_loss=None,
                         sample_weight=None,
@@ -297,24 +307,24 @@ def my_aggregate_losses(per_example_loss=None,
     """
     total_loss, weighted_loss, reg_loss = None, None, None
     if sample_weight is not None and not isinstance(sample_weight, tf.Tensor):
-      sample_weight = tf.convert_to_tensor(sample_weight, dtype=tf.float32)
+        sample_weight = tf.convert_to_tensor(sample_weight, dtype=tf.float32)
 
     # Compute loss that is scaled by global batch size.
     if per_example_loss is not None:
         loss_rank = per_example_loss.shape.rank
         if sample_weight is not None:
-              weight_rank = sample_weight.shape.rank
-              # Expand `sample_weight` to be broadcastable to the shape of
-              # `per_example_loss`, to ensure that multiplication works properly.
-              if weight_rank > 0 and loss_rank > weight_rank:
+            weight_rank = sample_weight.shape.rank
+            # Expand `sample_weight` to be broadcastable to the shape of
+            # `per_example_loss`, to ensure that multiplication works properly.
+            if weight_rank > 0 and loss_rank > weight_rank:
                 for dim in range(weight_rank, loss_rank):
-                  sample_weight = tf.expand_dims(sample_weight, dim)
-              # Sometimes we have an episode boundary or similar, and at this location
-              # the loss is nonsensical (i.e., inf or nan); and sample_weight is zero.
-              # In this case, we should respect the zero sample_weight and ignore the
-              # frame.
-              per_example_loss = tf.math.multiply_no_nan(
-                  per_example_loss, sample_weight)
+                    sample_weight = tf.expand_dims(sample_weight, dim)
+            # Sometimes we have an episode boundary or similar, and at this location
+            # the loss is nonsensical (i.e., inf or nan); and sample_weight is zero.
+            # In this case, we should respect the zero sample_weight and ignore the
+            # frame.
+            per_example_loss = tf.math.multiply_no_nan(
+                per_example_loss, sample_weight)
 
         if loss_rank is not None and loss_rank == 0:
             err_msg = (
@@ -323,298 +333,508 @@ def my_aggregate_losses(per_example_loss=None,
                 'Invalid value passed for `per_example_loss`. Expected a tensor '
                 'tensor with at least rank 1, received: {}'.format(per_example_loss))
             if tf.distribute.has_strategy():
-                  raise ValueError(err_msg)
+                raise ValueError(err_msg)
             else:
-                  logging.warning(err_msg)
-                  # Add extra dimension to prevent error in compute_average_loss.
-                  per_example_loss = tf.expand_dims(per_example_loss, 0)
+                logging.warning(err_msg)
+                # Add extra dimension to prevent error in compute_average_loss.
+                per_example_loss = tf.expand_dims(per_example_loss, 0)
         elif loss_rank > 2:
             # If per_example_loss is shaped [B, T, ...], we need to compute the mean
             # across the extra dimensions, ex. time, as well.
             per_example_loss = tf.reduce_mean(per_example_loss, range(1, loss_rank))
 
         weighted_loss = my_compute_average_loss(
-            per_example_loss,)
+            per_example_loss, )
         total_loss = weighted_loss
     # Add scaled regularization losses.
     if regularization_loss is not None:
         reg_loss = tf.nn.scale_regularization_loss(regularization_loss)
         if total_loss is None:
-          total_loss = reg_loss
+            total_loss = reg_loss
         else:
-          total_loss += reg_loss
+            total_loss += reg_loss
     return AggregatedLosses(total_loss, weighted_loss, reg_loss)
+
 
 def my_compute_average_loss(per_example_loss,
                             sample_weight=None):
-  """Scales per-example losses with sample_weights and computes their average.
+    """Scales per-example losses with sample_weights and computes their average.
+  
+    Usage with distribution strategy and custom training loop:
+  
+    ```python
+    with strategy.scope():
+      def compute_loss(labels, predictions, sample_weight=None):
+  
+        # If you are using a `Loss` class instead, set reduction to `NONE` so that
+        # we can do the reduction afterwards and divide by global batch size.
+        per_example_loss = tf.keras.losses.sparse_categorical_crossentropy(
+            labels, predictions)
+  
+        # Compute loss that is scaled by sample_weight and by global batch size.
+            return tf.nn.compute_average_loss(
+            per_example_loss,
+            sample_weight=sample_weight,
+            global_batch_size=GLOBAL_BATCH_SIZE)
+    ```
+  
+    Args:
+      per_example_loss: Per-example loss.
+      sample_weight: Optional weighting for each example.
+  
+    Returns:
+      Scalar loss value.
+    """  # pylint: disable=g-doc-exception
+    per_example_loss = ops.convert_to_tensor(per_example_loss)
+    input_dtype = per_example_loss.dtype
 
-  Usage with distribution strategy and custom training loop:
+    with losses_util.check_per_example_loss_rank(per_example_loss):
+        if sample_weight is not None:
+            sample_weight = ops.convert_to_tensor(sample_weight)
+            per_example_loss = losses_util.scale_losses_by_sample_weight(
+                per_example_loss, sample_weight)
+            per_example_loss = math_ops.cast(per_example_loss, input_dtype)
+        num_replicas = distribute_lib.get_strategy().num_replicas_in_sync
+        per_replica_batch_size = array_ops.shape_v2(per_example_loss)[0]
+        global_batch_size = per_replica_batch_size * num_replicas
 
-  ```python
-  with strategy.scope():
-    def compute_loss(labels, predictions, sample_weight=None):
-
-      # If you are using a `Loss` class instead, set reduction to `NONE` so that
-      # we can do the reduction afterwards and divide by global batch size.
-      per_example_loss = tf.keras.losses.sparse_categorical_crossentropy(
-          labels, predictions)
-
-      # Compute loss that is scaled by sample_weight and by global batch size.
-          return tf.nn.compute_average_loss(
-          per_example_loss,
-          sample_weight=sample_weight,
-          global_batch_size=GLOBAL_BATCH_SIZE)
-  ```
-
-  Args:
-    per_example_loss: Per-example loss.
-    sample_weight: Optional weighting for each example.
-
-  Returns:
-    Scalar loss value.
-  """  # pylint: disable=g-doc-exception
-  per_example_loss = ops.convert_to_tensor(per_example_loss)
-  input_dtype = per_example_loss.dtype
-
-  with losses_util.check_per_example_loss_rank(per_example_loss):
-    if sample_weight is not None:
-      sample_weight = ops.convert_to_tensor(sample_weight)
-      per_example_loss = losses_util.scale_losses_by_sample_weight(
-          per_example_loss, sample_weight)
-      per_example_loss = math_ops.cast(per_example_loss, input_dtype)
-    num_replicas = distribute_lib.get_strategy().num_replicas_in_sync
-    per_replica_batch_size = array_ops.shape_v2(per_example_loss)[0]
-    global_batch_size = per_replica_batch_size * num_replicas
-
-    global_batch_size = math_ops.cast(global_batch_size, input_dtype)
-    return math_ops.reduce_sum(per_example_loss, axis=0) / global_batch_size
+        global_batch_size = math_ops.cast(global_batch_size, input_dtype)
+        return math_ops.reduce_sum(per_example_loss, axis=0) / global_batch_size
 
 
 def my_to_n_step_transition(
-    trajectory: Trajectory,
-    gamma: types.Float
+        trajectory: Trajectory,
+        gamma: types.Float
 ) -> Transition:
-  """Create an n-step transition from a trajectory with `T=N + 1` frames.
+    """Create an n-step transition from a trajectory with `T=N + 1` frames.
 
-  **NOTE** Tensors of `trajectory` are sliced along their *second* (`time`)
-  dimension, to pull out the appropriate fields for the n-step transitions.
+    **NOTE** Tensors of `trajectory` are sliced along their *second* (`time`)
+    dimension, to pull out the appropriate fields for the n-step transitions.
 
-  The output transition's `next_time_step.{reward, discount}` will contain
-  N-step discounted reward and discount values calculated as:
+    The output transition's `next_time_step.{reward, discount}` will contain
+    N-step discounted reward and discount values calculated as:
 
-  ```
-  next_time_step.reward = r_t +
-                          g^{1} * d_t * r_{t+1} +
-                          g^{2} * d_t * d_{t+1} * r_{t+2} +
-                          g^{3} * d_t * d_{t+1} * d_{t+2} * r_{t+3} +
-                          ...
-                          g^{N-1} * d_t * ... * d_{t+N-2} * r_{t+N-1}
-  next_time_step.discount = g^{N-1} * d_t * d_{t+1} * ... * d_{t+N-1}
-  ```
-
-  In python notation:
-
-  ```python
-  discount = gamma**(N-1) * reduce_prod(trajectory.discount[:, :-1])
-  reward = discounted_return(
-      rewards=trajectory.reward[:, :-1],
-      discounts=gamma * trajectory.discount[:, :-1])
-  ```
-
-  When `trajectory.discount[:, :-1]` is an all-ones tensor, this is equivalent
-  to:
-
-  ```python
-  next_time_step.discount = (
-      gamma**(N-1) * tf.ones_like(trajectory.discount[:, 0]))
-  next_time_step.reward = (
-      sum_{n=0}^{N-1} gamma**n * trajectory.reward[:, n])
-  ```
-
-  Args:
-    trajectory: An instance of `Trajectory`. The tensors in Trajectory must have
-      shape `[B, T, ...]`.  `discount` is assumed to be a scalar float,
-      hence the shape of `trajectory.discount` must be `[B, T]`.
-    gamma: A floating point scalar; the discount factor.
-
-  Returns:
-    An N-step `Transition` where `N = T - 1`.  The reward and discount in
-    `time_step.{reward, discount}` are NaN.  The n-step discounted reward
-    and final discount are stored in `next_time_step.{reward, discount}`.
-    All tensors in the `Transition` have shape `[B, ...]` (no time dimension).
-
-  Raises:
-    ValueError: if `discount.shape.rank != 2`.
-    ValueError: if `discount.shape[1] < 2`.
-  """
-  _validate_rank(trajectory.discount, min_rank=3, max_rank=3)
-
-  # Use static values when available, so that we can use XLA when the time
-  # dimension is fixed.
-  time_dim = (tf.compat.dimension_value(trajectory.discount.shape[1])
-              or tf.shape(trajectory.discount)[1])
-
-  static_time_dim = tf.get_static_value(time_dim)
-  if static_time_dim in (0, 1):
-    raise ValueError(
-        'Trajectory frame count must be at least 2, but saw {}.  Shape of '
-        'trajectory.discount: {}'.format(static_time_dim,
-                                         trajectory.discount.shape))
-
-  n = time_dim - 1
-
-  # Use composite calculations to ensure we properly handle SparseTensor etc in
-  # the observations.
-
-  # pylint: disable=g-long-lambda
-
-  # Pull out x[:,0] for x in trajectory
-  first_frame = tf.nest.map_structure(
-      lambda t: composite.squeeze(
-          composite.slice_to(t, axis=1, end=1),
-          axis=1),
-      trajectory)
-
-  # Pull out x[:,-1] for x in trajectory
-  final_frame = tf.nest.map_structure(
-      lambda t: composite.squeeze(
-          composite.slice_from(t, axis=1, start=-1),
-          axis=1),
-      trajectory)
-  # pylint: enable=g-long-lambda
-
-  # When computing discounted return, we need to throw out the last time
-  # index of both reward and discount, which are filled with dummy values
-  # to match the dimensions of the observation.
-  reward = trajectory.reward[:, :-1]
-  discount = trajectory.discount[:, :-1]
-
-  policy_steps = policy_step.PolicyStep(
-      action=first_frame.action, state=(), info=first_frame.policy_info)
-
-  discounted_reward = my_discounted_return(
-      rewards=reward,
-      discounts=gamma * discount,
-      time_major=False,
-      provide_all_returns=False)
-
-  # NOTE: `final_discount` will have one less discount than `discount`.
-  # This is so that when the learner/update uses an additional
-  # discount (e.g. gamma) we don't apply it twice.
-  final_discount = gamma**(n-1) * tf.math.reduce_prod(discount, axis=1)
-
-  time_steps = ts.TimeStep(
-      first_frame.step_type,
-      # unknown
-      reward=tf.nest.map_structure(
-          lambda r: np.nan * tf.ones_like(r), first_frame.reward),
-      # unknown
-      discount=np.nan * tf.ones_like(first_frame.discount),
-      observation=first_frame.observation)
-  next_time_steps = ts.TimeStep(
-      step_type=final_frame.step_type,
-      reward=discounted_reward,
-      discount=final_discount,
-      observation=final_frame.observation)
-  return Transition(time_steps, policy_steps, next_time_steps)
-
-
-def __call__(self, inputs, *args, **kwargs):
-    """A wrapper around `Network.call`.
-
-    A typical `call` method in a class subclassing `Network` will have a
-    signature that accepts `inputs`, as well as other `*args` and `**kwargs`.
-    `call` can optionally also accept `step_type` and `network_state`
-    (if `state_spec != ()` is not trivial).  e.g.:
-
-    ```python
-    def call(self,
-             inputs,
-             step_type=None,
-             network_state=(),
-             training=False):
-        ...
-        return outputs, new_network_state
+    ```
+    next_time_step.reward = r_t +
+                            g^{1} * d_t * r_{t+1} +
+                            g^{2} * d_t * d_{t+1} * r_{t+2} +
+                            g^{3} * d_t * d_{t+1} * d_{t+2} * r_{t+3} +
+                            ...
+                            g^{N-1} * d_t * ... * d_{t+N-2} * r_{t+N-1}
+    next_time_step.discount = g^{N-1} * d_t * d_{t+1} * ... * d_{t+N-1}
     ```
 
-    We will validate the first argument (`inputs`)
-    against `self.input_tensor_spec` if one is available.
+    In python notation:
 
-    If a `network_state` kwarg is given it is also validated against
-    `self.state_spec`.  Similarly, the return value of the `call` method is
-    expected to be a tuple/list with 2 values:  `(output, new_state)`.
-    We validate `new_state` against `self.state_spec`.
+    ```python
+    discount = gamma**(N-1) * reduce_prod(trajectory.discount[:, :-1])
+    reward = discounted_return(
+        rewards=trajectory.reward[:, :-1],
+        discounts=gamma * trajectory.discount[:, :-1])
+    ```
 
-    If no `network_state` kwarg is given (or if empty `network_state = ()` is
-    given, it is up to `call` to assume a proper "empty" state, and to
-    emit an appropriate `output_state`.
+    When `trajectory.discount[:, :-1]` is an all-ones tensor, this is equivalent
+    to:
+
+    ```python
+    next_time_step.discount = (
+        gamma**(N-1) * tf.ones_like(trajectory.discount[:, 0]))
+    next_time_step.reward = (
+        sum_{n=0}^{N-1} gamma**n * trajectory.reward[:, n])
+    ```
 
     Args:
-      inputs: The input to `self.call`, matching `self.input_tensor_spec`.
-      *args: Additional arguments to `self.call`.
-      **kwargs: Additional keyword arguments to `self.call`.
-        These can include `network_state` and `step_type`.  `step_type` is
-        required if the network's `call` requires it. `network_state` is
-        required if the underlying network's `call` requires it.
+      trajectory: An instance of `Trajectory`. The tensors in Trajectory must have
+        shape `[B, T, ...]`.  `discount` is assumed to be a scalar float,
+        hence the shape of `trajectory.discount` must be `[B, T]`.
+      gamma: A floating point scalar; the discount factor.
 
     Returns:
-      A tuple `(outputs, new_network_state)`.
+      An N-step `Transition` where `N = T - 1`.  The reward and discount in
+      `time_step.{reward, discount}` are NaN.  The n-step discounted reward
+      and final discount are stored in `next_time_step.{reward, discount}`.
+      All tensors in the `Transition` have shape `[B, ...]` (no time dimension).
+
+    Raises:
+      ValueError: if `discount.shape.rank != 2`.
+      ValueError: if `discount.shape[1] < 2`.
     """
-    if self.input_tensor_spec is not None:
-        nest_utils.assert_matching_dtypes_and_inner_shapes(
-            inputs,
-            self.input_tensor_spec,
-            allow_extra_fields=True,
-            caller=self,
-            tensors_name="`inputs`",
-            specs_name="`input_tensor_spec`")
+    _validate_rank(trajectory.discount, min_rank=3, max_rank=3)
 
-    call_argspec = tf_inspect.getargspec(self.call)
-    if isinstance(call_argspec, FullArgSpec):
-        call_argspec = ArgSpec(
-            args=call_argspec.args,
-            varargs=call_argspec.varargs,
-            keywords=call_argspec.varkw,
-            defaults=call_argspec.defaults,
-        )
+    # Use static values when available, so that we can use XLA when the time
+    # dimension is fixed.
+    time_dim = (tf.compat.dimension_value(trajectory.discount.shape[1])
+                or tf.shape(trajectory.discount)[1])
 
-    # Convert *args, **kwargs to a canonical kwarg representation.
-    normalized_kwargs = tf_inspect.getcallargs(
-        self.call, inputs, *args, **kwargs)
-    # TODO(b/156315434): Rename network_state to just state.
-    network_state = normalized_kwargs.get("network_state", None)
-    normalized_kwargs.pop("self", None)
+    static_time_dim = tf.get_static_value(time_dim)
+    if static_time_dim in (0, 1):
+        raise ValueError(
+            'Trajectory frame count must be at least 2, but saw {}.  Shape of '
+            'trajectory.discount: {}'.format(static_time_dim,
+                                             trajectory.discount.shape))
 
-    if common.safe_has_state(network_state):
-        nest_utils.assert_matching_dtypes_and_inner_shapes(
-            network_state,
-            self.state_spec,
-            allow_extra_fields=True,
-            caller=self,
-            tensors_name="`network_state`",
-            specs_name="`state_spec`")
+    n = time_dim - 1
 
-    if "step_type" not in call_argspec.args and not call_argspec.keywords:
-        normalized_kwargs.pop("step_type", None)
+    # Use composite calculations to ensure we properly handle SparseTensor etc in
+    # the observations.
 
-    # network_state can be a (), None, Tensor or NestedTensors.
-    if (not tf.is_tensor(network_state)
-            and network_state in (None, ())
-            and "network_state" not in call_argspec.args
-            and not call_argspec.keywords):
-        normalized_kwargs.pop("network_state", None)
+    # pylint: disable=g-long-lambda
 
-    outputs, new_state = super(Network, self).__call__(
-        **normalized_kwargs)  # pytype: disable=attribute-error  # typed-keras
+    # Pull out x[:,0] for x in trajectory
+    first_frame = tf.nest.map_structure(
+        lambda t: composite.squeeze(
+            composite.slice_to(t, axis=1, end=1),
+            axis=1),
+        trajectory)
 
-    nest_utils.assert_matching_dtypes_and_inner_shapes(
-        new_state,
-        self.state_spec,
-        allow_extra_fields=True,
-        caller=self,
-        tensors_name="`new_state`",
-        specs_name="`state_spec`")
+    # Pull out x[:,-1] for x in trajectory
+    final_frame = tf.nest.map_structure(
+        lambda t: composite.squeeze(
+            composite.slice_from(t, axis=1, start=-1),
+            axis=1),
+        trajectory)
+    # pylint: enable=g-long-lambda
 
-    return outputs, new_state
+    # When computing discounted return, we need to throw out the last time
+    # index of both reward and discount, which are filled with dummy values
+    # to match the dimensions of the observation.
+    reward = trajectory.reward[:, :-1]
+    discount = trajectory.discount[:, :-1]
 
+    policy_steps = policy_step.PolicyStep(
+        action=first_frame.action, state=(), info=first_frame.policy_info)
+
+    discounted_reward = my_discounted_return(
+        rewards=reward,
+        discounts=gamma * discount,
+        time_major=False,
+        provide_all_returns=False)
+
+    # NOTE: `final_discount` will have one less discount than `discount`.
+    # This is so that when the learner/update uses an additional
+    # discount (e.g. gamma) we don't apply it twice.
+    final_discount = gamma ** (n - 1) * tf.math.reduce_prod(discount, axis=1)
+
+    time_steps = ts.TimeStep(
+        first_frame.step_type,
+        # unknown
+        reward=tf.nest.map_structure(
+            lambda r: np.nan * tf.ones_like(r), first_frame.reward),
+        # unknown
+        discount=np.nan * tf.ones_like(first_frame.discount),
+        observation=first_frame.observation)
+    next_time_steps = ts.TimeStep(
+        step_type=final_frame.step_type,
+        reward=discounted_reward,
+        discount=final_discount,
+        observation=final_frame.observation)
+    return Transition(time_steps, policy_steps, next_time_steps)
+
+
+# def __call__(self, inputs, *args, **kwargs):
+#     """A wrapper around `Network.call`.
+#
+#     A typical `call` method in a class subclassing `Network` will have a
+#     signature that accepts `inputs`, as well as other `*args` and `**kwargs`.
+#     `call` can optionally also accept `step_type` and `network_state`
+#     (if `state_spec != ()` is not trivial).  e.g.:
+#
+#     ```python
+#     def call(self,
+#              inputs,
+#              step_type=None,
+#              network_state=(),
+#              training=False):
+#         ...
+#         return outputs, new_network_state
+#     ```
+#
+#     We will validate the first argument (`inputs`)
+#     against `self.input_tensor_spec` if one is available.
+#
+#     If a `network_state` kwarg is given it is also validated against
+#     `self.state_spec`.  Similarly, the return value of the `call` method is
+#     expected to be a tuple/list with 2 values:  `(output, new_state)`.
+#     We validate `new_state` against `self.state_spec`.
+#
+#     If no `network_state` kwarg is given (or if empty `network_state = ()` is
+#     given, it is up to `call` to assume a proper "empty" state, and to
+#     emit an appropriate `output_state`.
+#
+#     Args:
+#       inputs: The input to `self.call`, matching `self.input_tensor_spec`.
+#       *args: Additional arguments to `self.call`.
+#       **kwargs: Additional keyword arguments to `self.call`.
+#         These can include `network_state` and `step_type`.  `step_type` is
+#         required if the network's `call` requires it. `network_state` is
+#         required if the underlying network's `call` requires it.
+#
+#     Returns:
+#       A tuple `(outputs, new_network_state)`.
+#     """
+#     if self.input_tensor_spec is not None:
+#         nest_utils.assert_matching_dtypes_and_inner_shapes(
+#             inputs,
+#             self.input_tensor_spec,
+#             allow_extra_fields=True,
+#             caller=self,
+#             tensors_name="`inputs`",
+#             specs_name="`input_tensor_spec`")
+#
+#     call_argspec = tf_inspect.getargspec(self.call)
+#     if isinstance(call_argspec, FullArgSpec):
+#         call_argspec = ArgSpec(
+#             args=call_argspec.args,
+#             varargs=call_argspec.varargs,
+#             keywords=call_argspec.varkw,
+#             defaults=call_argspec.defaults,
+#         )
+#
+#     # Convert *args, **kwargs to a canonical kwarg representation.
+#     normalized_kwargs = tf_inspect.getcallargs(
+#         self.call, inputs, *args, **kwargs)
+#     # TODO(b/156315434): Rename network_state to just state.
+#     network_state = normalized_kwargs.get("network_state", None)
+#     normalized_kwargs.pop("self", None)
+#
+#     if common.safe_has_state(network_state):
+#         nest_utils.assert_matching_dtypes_and_inner_shapes(
+#             network_state,
+#             self.state_spec,
+#             allow_extra_fields=True,
+#             caller=self,
+#             tensors_name="`network_state`",
+#             specs_name="`state_spec`")
+#
+#     if "step_type" not in call_argspec.args and not call_argspec.keywords:
+#         normalized_kwargs.pop("step_type", None)
+#
+#     # network_state can be a (), None, Tensor or NestedTensors.
+#     if (not tf.is_tensor(network_state)
+#             and network_state in (None, ())
+#             and "network_state" not in call_argspec.args
+#             and not call_argspec.keywords):
+#         normalized_kwargs.pop("network_state", None)
+#
+#     outputs, new_state = super(Network, self).__call__(
+#         **normalized_kwargs)  # pytype: disable=attribute-error  # typed-keras
+#
+#     nest_utils.assert_matching_dtypes_and_inner_shapes(
+#         new_state,
+#         self.state_spec,
+#         allow_extra_fields=True,
+#         caller=self,
+#         tensors_name="`new_state`",
+#         specs_name="`state_spec`")
+#
+#     return outputs, new_state
+
+class Plotter(abc.ABC):
+    def __init__(self, *args, **kwargs):
+        self._tensor = kwargs.pop('tensor')
+
+    @property
+    def tensor(self):
+        return self._tensor
+
+    @abc.abstractmethod
+    def call(self, *args, **kwargs):
+        pass
+
+    def _update_state(self, *arg, **kwargs):
+        """A function wrapping the implementor-defined call method."""
+        return self.call(*arg, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        """Returns op to execute to update this metric for these inputs.
+
+        Returns None if eager execution is enabled.
+        Returns a graph-mode function if graph execution is enabled.
+
+        Args:
+          *args:
+          **kwargs: A mini-batch of inputs to the Metric, passed on to `call()`.
+        """
+        return self._update_state(*args, **kwargs)
+
+class ActionPlotter(Plotter):
+
+    def __init__(self, *args, **kwargs):
+        self._index = tf.Variable(0, dtype=tf.int64)
+        super(ActionPlotter, self).__init__(*args, **kwargs)
+
+    @property
+    def index(self):
+        return self._index
+
+    @index.setter
+    def index(self, value):
+        self._index.assign(value)
+
+    def call(self, trajectory):
+        action = trajectory.action[0]
+        boundary_coefficient = 1 - tf.squeeze(tf.cast(trajectory.is_boundary(), tf.int64))
+        mult = tf.cast(boundary_coefficient, tf.float32)
+        corrected_index = self._index * boundary_coefficient
+        update = action * mult + self._tensor[corrected_index] * (1.0 - mult)
+        self._tensor.scatter_nd_update([[corrected_index]], [update])
+        self._index.assign_add(boundary_coefficient)
+
+class RewardPlotter(ActionPlotter):
+
+    def call(self, trajectory):
+        action = trajectory.reward[0]
+        boundary_coefficient = 1 - tf.squeeze(tf.cast(trajectory.is_boundary(), tf.int64))
+        mult = tf.cast(boundary_coefficient, tf.float32)
+        corrected_index = self._index * boundary_coefficient
+        update = action * mult + self._tensor[corrected_index] * (1.0 - mult)
+        self._tensor.scatter_nd_update([[corrected_index]], [update])
+        self._index.assign_add(boundary_coefficient)
+
+
+
+
+class MultiAgentTrainScheduler(abc.ABC):
+    @abc.abstractmethod
+    def return_next_agent(self, epoch: int) -> tuple[List[int], float]:
+        pass
+
+
+class ConstantDistributionTrainScheduler(MultiAgentTrainScheduler):
+    """
+    Multi-agent train scheduler that handles training when each agent trains for a constant amount of epochs. The order
+    of the agents to train is given by the user. The learning rate returned can either be constant or a Keras
+    LearningRateSchedule and the epoch given translates to the amount of epochs each particular agent has trained
+    """
+
+    def __init__(self,
+                 lr_list: List[Union[LearningRateSchedule, float]],
+                 epochs_per_agent: List[Tuple[int, int]]):
+        if [i[1] for i in epochs_per_agent if (not isinstance(i[1], int) or i[1] < 0)]:
+            raise Exception('epochs_per_agent should be a list of positive integers denoting how many epochs each agent'
+                            'must train during a train run equal to the sum of the list')
+        super().__init__()
+        # if (sorted([i[0] for i in epochs_per_agent]) != list(range(0, self._agents_ammount))) and \
+        #         (sorted([i[0] for i in epochs_per_agent]) != list(range(1, self._agents_ammount + 1))):
+        #     raise Exception('epochs_per_agent list of tuples has not a permutation of the range'
+        #                     ' of agents as the 1st element of each tuple')
+        # if (sorted([i[0] for i in epochs_per_agent]) == list(range(1, self._agents_ammount + 1))):
+        #     self._epochs_per_agent = [(i[0] - 1, i[1]) for i in epochs_per_agent]
+        # else:
+        #     self._epochs_per_agent = epochs_per_agent
+        self._agents_amount = len(lr_list)
+        self._lr_list = lr_list
+        self._epochs_per_agent = epochs_per_agent
+        self._accumulated_epochs = list(itertools.accumulate([i[1] for i in self._epochs_per_agent]))
+        self._epochs_sum = self._accumulated_epochs[-1]
+
+    @property
+    def epochs_per_agent(self):
+        return self._epochs_per_agent
+
+    def return_next_agent(self, epoch: int) -> tuple[List[int], float]:
+        if epoch < 1:
+            raise Exception("Epoch should be an integer > 0 (start counting from 1)")
+        epoch_minus_1 = epoch - 1
+        total_epochs = (epoch_minus_1) // self._epochs_sum
+        current_epoch = (epoch_minus_1) % self._epochs_sum
+        index = bisect.bisect_right(self._accumulated_epochs, current_epoch)
+        agent = self._epochs_per_agent[index][0]
+        agent_epoch = total_epochs * self._epochs_per_agent[index][1] + self._epochs_per_agent[index][1] - \
+                      (self._accumulated_epochs[index] - current_epoch)
+        lr = self._lr_list[agent](agent_epoch) if isinstance(self._lr_list[agent], LearningRateSchedule) else \
+            self._lr_list[agent]
+        return [agent], lr
+
+
+class RandomDistributionTrainScheduler(MultiAgentTrainScheduler):
+    """
+    Multi-agent train scheduler that handles training when each agent trains for a random amount of epochs and in
+    random order. The learning rate returned can either be constant or a Keras LearningRateSchedule and the epoch given
+    translates to the amount of epochs each particular agent has trained
+    """
+
+    def __init__(self,
+                 number_of_agents: int,
+                 lr_high: float = 1e-4,
+                 lr_low: float = 1e-6,
+                 epochs_high: int = 20,
+                 epochs_low: int = 1):
+        super().__init__()
+        self._number_of_agents = number_of_agents
+        self._lr_high = lr_high
+        self._lr_low = lr_low
+        self._epochs_high = epochs_high
+        self._epochs_low = epochs_low
+        self._count = 0
+        self._last_agent = random.randint(0, number_of_agents - 1)
+
+    @property
+    def count(self):
+        return self._count
+    @count.setter
+    def count(self, value):
+        self._count = value
+    @property
+    def number_of_agents(self):
+        return self._number_of_agents
+
+    @property
+    def lr_high(self):
+        return self._lr_high
+
+    @lr_high.setter
+    def lr_high(self, value):
+        if not isinstance(value, float):
+            raise Exception('lr_high has to be a float. {} was given'.format(type(value)))
+        self._lr_high = value
+
+    @property
+    def lr_low(self):
+        return self._lr_low
+
+    @lr_low.setter
+    def lr_low(self, value):
+        if not isinstance(value, float):
+            raise Exception('lr_low has to be a float. {} was given'.format(type(value)))
+        self._lr_low = value
+
+    @property
+    def epochs_high(self):
+        return self._epochs_high
+
+    @epochs_high.setter
+    def epochs_high(self, value):
+        if not isinstance(value, int):
+            raise Exception('epochs_high has to be an int. {} was given'.format(type(value)))
+        self._epochs_high = value
+
+    @property
+    def epochs_low(self):
+        return self._epochs_low
+
+    @epochs_low.setter
+    def epochs_low(self, value):
+        if not isinstance(value, int):
+            raise Exception('epochs_low has to be an int. {} was given'.format(type(value)))
+        self._epochs_low = value
+
+    def _update_agent(self):
+        new_agent = random.randint(0, max(0, self._number_of_agents - 2))
+        self._last_agent = new_agent + 1 if new_agent >= self._last_agent else new_agent
+
+    def return_next_agent(self, epoch: int) -> tuple[List[int], float]:
+        if self._count < self._epochs_high:
+            lr = self._lr_high(self._count) if isinstance(self._lr_high, LearningRateSchedule) else self._lr_high
+            self._count += 1
+            return [self._last_agent], lr
+        elif self._count < self._epochs_high + self._epochs_low:
+            if self._count == self._epochs_high:
+                self._update_agent()
+            lr = self._lr_low(self.count - 1) if isinstance(self._lr_low, LearningRateSchedule) else self._lr_low
+            self._count += 1
+            return [self._last_agent], lr
+        else:
+            self._update_agent()
+            self._count = 0
+            return self.return_next_agent(epoch)

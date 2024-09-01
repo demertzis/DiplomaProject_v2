@@ -54,20 +54,20 @@ def punishing_uniform(prices: tf.Tensor, crid_price: tf.Tensor, tick: tf.Tensor,
                                                                                            tick,
                                                                                            action,
                                                                                            avg_consumption)
-    total_ammount = total_demand * (buy_price + sell_price)
+    total_amount = total_demand * (buy_price + sell_price)
     total_prices = tf.concat((prices, [crid_price, sell_price_min]), axis=0)
     min_price = tf.math.reduce_min(total_prices)
     price_diff = (tf.math.reduce_max(total_prices) - min_price)
     punishing_coefficient_unclipped = 1.6 * tf.math.sigmoid(4 * ((buy_price_max - min_price) / price_diff - 0.5)) - 0.3
     punishing_coefficient = tf.clip_by_value(punishing_coefficient_unclipped, 0.0, 1.0)
     buyers_tensor = tf.clip_by_value(action, 0.0, 10000000.0)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
     sellers_tensor = tf.clip_by_value(action, -10000000.0, 0.0)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
-    minimum_valid_buy_price = tf.math.divide_no_nan(total_ammount - sell_ammount * sell_price_min, buy_ammount)
+    sell_amount = tf.reduce_sum(sellers_tensor)
+    minimum_valid_buy_price = tf.math.divide_no_nan(total_amount - sell_amount * sell_price_min, buy_amount)
     # final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
     final_buy_price = (buy_price - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
-    final_sell_price = tf.math.divide_no_nan((total_ammount - buy_ammount * final_buy_price), sell_ammount)
+    final_sell_price = tf.math.divide_no_nan((total_amount - buy_amount * final_buy_price), sell_amount)
     # return (tf.cast(tf.less(0.0, action), tf.float32) * final_buy_price + \
     # 	    tf.cast(tf.less(action, 0.0), tf.float32) * final_sell_price) * \
     # 	   action
@@ -81,22 +81,22 @@ def punishing_non_uniform_non_individually_rational(prices: tf.Tensor, crid_pric
                                                                                            tick,
                                                                                            action,
                                                                                            avg_consumption)
-    total_ammount = total_demand * (buy_price + sell_price)
+    total_amount = total_demand * (buy_price + sell_price)
     total_prices = tf.concat((prices, [crid_price, sell_price_min]), axis=0)
     price_diff = (tf.math.reduce_max(total_prices) - tf.math.reduce_min(total_prices))
     min_price = tf.math.reduce_min(total_prices)
     punishing_coefficient_unclipped = 1.6 * tf.math.sigmoid(4 * ((buy_price_max - min_price) / price_diff - 0.5)) - 0.3
     punishing_coefficient = tf.clip_by_value(punishing_coefficient_unclipped, 0.0, 1.0)
     buyers_tensor = tf.clip_by_value(action, 0.0, 10000000.0)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
     sellers_tensor = tf.clip_by_value(action, -10000000.0, 0.0)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
-    minimum_valid_buy_price = tf.math.divide_no_nan(total_ammount - sell_ammount * sell_price_min, buy_ammount)
+    sell_amount = tf.reduce_sum(sellers_tensor)
+    minimum_valid_buy_price = tf.math.divide_no_nan(total_amount - sell_amount * sell_price_min, buy_amount)
     # final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
     final_buy_price = (buy_price - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
-    final_sell_price = tf.math.divide_no_nan((total_ammount - buy_ammount * final_buy_price), sell_ammount)
+    final_sell_price = tf.math.divide_no_nan((total_amount - buy_amount * final_buy_price), sell_amount)
 
-    buy_ratios = tf.math.divide_no_nan(buyers_tensor, buy_ammount)
+    buy_ratios = tf.math.divide_no_nan(buyers_tensor, buy_amount)
     inverse_buy_ratios = tf.math.divide_no_nan(1.0, buy_ratios)
     inverse_exp_buy_tensor = tf.exp(-inverse_buy_ratios)
     inverse_exp_buy_ratios = inverse_exp_buy_tensor / tf.reduce_sum(inverse_exp_buy_tensor)
@@ -110,7 +110,7 @@ def punishing_non_uniform_non_individually_rational(prices: tf.Tensor, crid_pric
     buy_final_ratios = corrected_inverse_exp_buy_ratios * punishing_coefficient + \
                        corrected_exp_buy_ratios * (1.0 - punishing_coefficient)
 
-    sell_ratios = tf.math.divide_no_nan(sellers_tensor, sell_ammount)
+    sell_ratios = tf.math.divide_no_nan(sellers_tensor, sell_amount)
     inverse_sell_ratios = tf.math.divide_no_nan(1.0, sell_ratios)
     inverse_exp_sell_tensor = tf.exp(-inverse_sell_ratios)
     inverse_exp_sell_ratios = inverse_exp_sell_tensor / tf.reduce_sum(inverse_exp_sell_tensor)
@@ -138,22 +138,22 @@ def punishing_non_uniform_individually_rational(prices: tf.Tensor, crid_price: t
                                                                                            tick,
                                                                                            action,
                                                                                            avg_consumption)
-    total_ammount = total_demand * (buy_price + sell_price)
+    total_amount = total_demand * (buy_price + sell_price)
     total_prices = tf.concat((prices, [crid_price, sell_price_min]), axis=0)
     price_diff = (tf.math.reduce_max(total_prices) - tf.math.reduce_min(total_prices))
     min_price = tf.math.reduce_min(total_prices)
     punishing_coefficient_unclipped = 1.6 * tf.math.sigmoid(4 * ((buy_price_max - min_price) / price_diff - 0.5)) - 0.3
     punishing_coefficient = tf.clip_by_value(punishing_coefficient_unclipped, 0.0, 1.0)
     buyers_tensor = tf.clip_by_value(action, 0.0, 10000000.0)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
     sellers_tensor = tf.clip_by_value(action, -10000000.0, 0.0)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
-    minimum_valid_buy_price = tf.math.divide_no_nan(total_ammount - sell_ammount * sell_price_min, buy_ammount)
+    sell_amount = tf.reduce_sum(sellers_tensor)
+    minimum_valid_buy_price = tf.math.divide_no_nan(total_amount - sell_amount * sell_price_min, buy_amount)
     # final_buy_price = (buy_price_max - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
     final_buy_price = (buy_price - minimum_valid_buy_price) * punishing_coefficient + minimum_valid_buy_price
-    final_sell_price = tf.math.divide_no_nan((total_ammount - buy_ammount * final_buy_price), sell_ammount)
+    final_sell_price = tf.math.divide_no_nan((total_amount - buy_amount * final_buy_price), sell_amount)
 
-    buy_ratios = tf.math.divide_no_nan(buyers_tensor, buy_ammount)
+    buy_ratios = tf.math.divide_no_nan(buyers_tensor, buy_amount)
     inverse_buy_ratios = tf.clip_by_value(tf.math.divide_no_nan(1.0, buy_ratios), 0.0,
                                           87.0)  # clip because exp overflows
     # inverse_exp_buy_tensor = tf.exp(inverse_buy_ratios)
@@ -169,7 +169,7 @@ def punishing_non_uniform_individually_rational(prices: tf.Tensor, crid_price: t
     buy_final_ratios = corrected_inverse_exp_buy_ratios * punishing_coefficient + \
                        corrected_exp_buy_ratios * (1.0 - punishing_coefficient)
 
-    sell_ratios = tf.math.divide_no_nan(sellers_tensor, sell_ammount)
+    sell_ratios = tf.math.divide_no_nan(sellers_tensor, sell_amount)
     inverse_sell_ratios = tf.math.divide_no_nan(1.0, sell_ratios)
     inverse_exp_sell_tensor = tf.exp(-inverse_sell_ratios)
     inverse_exp_sell_ratios = inverse_exp_sell_tensor / tf.reduce_sum(inverse_exp_sell_tensor)
@@ -183,12 +183,12 @@ def punishing_non_uniform_individually_rational(prices: tf.Tensor, crid_price: t
     sell_final_ratios = corrected_inverse_exp_sell_ratios * punishing_coefficient + \
                         corrected_exp_sell_ratios * (1.0 - punishing_coefficient)
 
-    max_buy_ammount = buyers_tensor * buy_price_max
-    final_buy_tensor = max_buy_ammount - buy_final_ratios * tf.reduce_sum(
-        max_buy_ammount - final_buy_price * buyers_tensor)
-    min_sell_ammount = sellers_tensor * sell_price_min
-    final_sell_tensor = min_sell_ammount + sell_final_ratios * tf.reduce_sum(
-        final_sell_price * sellers_tensor - min_sell_ammount)
+    max_buy_amount = buyers_tensor * buy_price_max
+    final_buy_tensor = max_buy_amount - buy_final_ratios * tf.reduce_sum(
+        max_buy_amount - final_buy_price * buyers_tensor)
+    min_sell_amount = sellers_tensor * sell_price_min
+    final_sell_tensor = min_sell_amount + sell_final_ratios * tf.reduce_sum(
+        final_sell_price * sellers_tensor - min_sell_amount)
     return final_buy_tensor + final_sell_tensor
 
 
@@ -202,15 +202,15 @@ def new_reward(prices: tf.Tensor,
                                                                                            tick,
                                                                                            action,
                                                                                            avg_consumption)
-    total_ammount = total_demand * (buy_price + sell_price)
+    total_amount = total_demand * (buy_price + sell_price)
 
     buyers_tensor = tf.nn.relu(action)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
 
     sellers_tensor = tf.nn.relu(-action)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
+    sell_amount = tf.reduce_sum(sellers_tensor)
 
-    neutralized_load = tf.minimum(buy_ammount, sell_ammount)
+    neutralized_load = tf.minimum(buy_amount, sell_amount)
     common_price = (prices[tick] + 0.8 * crid_price) / 2.0
 
     # buyers_indexes = tf.math.sign(buyers_tensor)
@@ -230,11 +230,11 @@ def new_reward(prices: tf.Tensor,
     unclipped_buyers_tensor = tf.gather(unclipped_sorted_buyers_tensor, tf.argsort(sorted_buyers_indexes))
 
 
-def new_reward_proportional(prices: tf.Tensor,
-                            crid_price: tf.Tensor,
-                            tick: tf.Tensor,
-                            action: tf.Tensor,
-                            avg_consumption: tf.Tensor) -> tf.Tensor:
+def new_reward_halfway(prices: tf.Tensor,
+                       crid_price: tf.Tensor,
+                       tick: tf.Tensor,
+                       action: tf.Tensor,
+                       avg_consumption: tf.Tensor) -> tf.Tensor:
     total_demand, buy_price, sell_price, sell_price_min, buy_price_max = _get_basic_values(prices,
                                                                                            crid_price,
                                                                                            tick,
@@ -242,18 +242,18 @@ def new_reward_proportional(prices: tf.Tensor,
                                                                                            avg_consumption)
 
     buyers_tensor = tf.nn.relu(action)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
 
     sellers_tensor = tf.nn.relu(-action)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
+    sell_amount = tf.reduce_sum(sellers_tensor)
 
-    neutralized_load = tf.minimum(buy_ammount, sell_ammount)
+    neutralized_load = tf.minimum(buy_amount, sell_amount)
     common_price = (prices[tick] + 0.8 * crid_price) / 2.0
 
     proportion_buyers_tensor = neutralized_load * tf.math.divide_no_nan(buyers_tensor, tf.reduce_sum(buyers_tensor))
     proportion_sellers_tensor = neutralized_load * tf.math.divide_no_nan(sellers_tensor, tf.reduce_sum(sellers_tensor))
 
-    final_buyers_tensor = buyers_tensor - proportion_buyers_tensor
+    final_buyers_tensor = buyers_tensor - proportion_buyers_tensor             #one of them is zero
     final_sellers_tensor = sellers_tensor - proportion_sellers_tensor
 
     final_tensor = final_buyers_tensor * buy_price + \
@@ -263,11 +263,11 @@ def new_reward_proportional(prices: tf.Tensor,
     return final_tensor
 
 
-def new_reward_proportional_buyers_biased(prices: tf.Tensor,
-                                          crid_price: tf.Tensor,
-                                          tick: tf.Tensor,
-                                          action: tf.Tensor,
-                                          avg_consumption: tf.Tensor) -> tf.Tensor:
+def new_reward_buyers_biased(prices: tf.Tensor,
+                             crid_price: tf.Tensor,
+                             tick: tf.Tensor,
+                             action: tf.Tensor,
+                             avg_consumption: tf.Tensor) -> tf.Tensor:
     total_demand, buy_price, sell_price, sell_price_min, buy_price_max = _get_basic_values(prices,
                                                                                            crid_price,
                                                                                            tick,
@@ -275,14 +275,14 @@ def new_reward_proportional_buyers_biased(prices: tf.Tensor,
                                                                                            avg_consumption)
 
     buyers_tensor = tf.nn.relu(action)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
 
     sellers_tensor = tf.nn.relu(-action)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
+    sell_amount = tf.reduce_sum(sellers_tensor)
 
-    neutralized_load = tf.minimum(buy_ammount, sell_ammount)
+    neutralized_load = tf.minimum(buy_amount, sell_amount)
     # common_price = (prices[tick] + 0.8 * crid_price) / 2.0
-    common_price = 0.8 * crid_price
+    common_price = tf.minimum(prices[tick], 0.8 * crid_price)
 
     proportion_buyers_tensor = neutralized_load * tf.math.divide_no_nan(buyers_tensor, tf.reduce_sum(buyers_tensor))
     proportion_sellers_tensor = neutralized_load * tf.math.divide_no_nan(sellers_tensor, tf.reduce_sum(sellers_tensor))
@@ -297,11 +297,11 @@ def new_reward_proportional_buyers_biased(prices: tf.Tensor,
     return final_tensor
 
 
-def new_reward_proportional_sellers_biased(prices: tf.Tensor,
-                                          crid_price: tf.Tensor,
-                                          tick: tf.Tensor,
-                                          action: tf.Tensor,
-                                          avg_consumption: tf.Tensor) -> tf.Tensor:
+def new_reward_sellers_biased(prices: tf.Tensor,
+                              crid_price: tf.Tensor,
+                              tick: tf.Tensor,
+                              action: tf.Tensor,
+                              avg_consumption: tf.Tensor) -> tf.Tensor:
     total_demand, buy_price, sell_price, sell_price_min, buy_price_max = _get_basic_values(prices,
                                                                                            crid_price,
                                                                                            tick,
@@ -309,14 +309,14 @@ def new_reward_proportional_sellers_biased(prices: tf.Tensor,
                                                                                            avg_consumption)
 
     buyers_tensor = tf.nn.relu(action)
-    buy_ammount = tf.reduce_sum(buyers_tensor)
+    buy_amount = tf.reduce_sum(buyers_tensor)
 
     sellers_tensor = tf.nn.relu(-action)
-    sell_ammount = tf.reduce_sum(sellers_tensor)
+    sell_amount = tf.reduce_sum(sellers_tensor)
 
-    neutralized_load = tf.minimum(buy_ammount, sell_ammount)
+    neutralized_load = tf.minimum(buy_amount, sell_amount)
     # common_price = (prices[tick] + 0.8 * crid_price) / 2.0
-    common_price = prices[tick]
+    common_price = tf.maximum(prices[tick], 0.8 * crid_price)
 
     proportion_buyers_tensor = neutralized_load * tf.math.divide_no_nan(buyers_tensor, tf.reduce_sum(buyers_tensor))
     proportion_sellers_tensor = neutralized_load * tf.math.divide_no_nan(sellers_tensor, tf.reduce_sum(sellers_tensor))
@@ -330,6 +330,58 @@ def new_reward_proportional_sellers_biased(prices: tf.Tensor,
 
     return final_tensor
 
+
+def new_reward_proportional_punishing(prices: tf.Tensor,
+                                      crid_price: tf.Tensor,
+                                      tick: tf.Tensor,
+                                      action: tf.Tensor,
+                                      avg_consumption: tf.Tensor) -> tf.Tensor:
+    total_demand, buy_price, sell_price, sell_price_min, buy_price_max = _get_basic_values(prices,
+                                                                                           crid_price,
+                                                                                           tick,
+                                                                                           action,
+                                                                                           avg_consumption)
+
+    buyers_tensor = tf.nn.relu(action)
+    buy_amount = tf.reduce_sum(buyers_tensor)
+
+    sellers_tensor = tf.nn.relu(-action)
+    sell_amount = tf.reduce_sum(sellers_tensor)
+
+    neutralized_load = tf.minimum(buy_amount, sell_amount)
+    # total_prices = tf.concat((prices, [sell_price_min]), axis=0)
+    # price_diff = tf.math.reduce_max(total_prices) - tf.math.reduce_min(total_prices)
+    # punishment_ratio = (buy_price + sell_price - tf.math.reduce_min(total_prices)) / (price_diff)
+    punishment_ratio = (prices[tick] - tf.reduce_min(prices)) / (tf.reduce_max(prices) - tf.reduce_min(prices))
+    buyers_biased_price = tf.minimum(prices[tick], 0.8 * crid_price)
+    sellers_biased_price = tf.maximum(prices[tick], 0.8 * crid_price)
+    common_price = (1.0 - punishment_ratio) * (sellers_biased_price - buyers_biased_price) + buyers_biased_price
+
+    proportion_buyers_tensor = neutralized_load * tf.math.divide_no_nan(buyers_tensor, tf.reduce_sum(buyers_tensor))
+    proportion_sellers_tensor = neutralized_load * tf.math.divide_no_nan(sellers_tensor, tf.reduce_sum(sellers_tensor))
+
+    final_buyers_tensor = buyers_tensor - proportion_buyers_tensor
+    final_sellers_tensor = sellers_tensor - proportion_sellers_tensor
+
+    final_tensor = final_buyers_tensor * buy_price + \
+                   (proportion_buyers_tensor - proportion_sellers_tensor) * common_price - \
+                   final_sellers_tensor * sell_price
+
+    return final_tensor
+
+
+def new_reward_equal(prices: tf.Tensor,
+                     crid_price: tf.Tensor,
+                     tick: tf.Tensor,
+                     action: tf.Tensor,
+                     avg_consumption: tf.Tensor) -> tf.Tensor:
+    total_demand, buy_price, sell_price, sell_price_min, buy_price_max = _get_basic_values(prices,
+                                                                                           crid_price,
+                                                                                           tick,
+                                                                                           action,
+                                                                                           avg_consumption)
+    return total_demand * (buy_price + sell_price) * \
+        tf.ones_like(action, tf.float32) / tf.cast(tf.shape(action)[-1], tf.float32)
 
 
 def new_reward_vcg_like(prices: tf.Tensor,

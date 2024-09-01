@@ -78,7 +78,7 @@ def create_single_agent(cls: type,
             #                                          shape=[buffer_max_size, 21],
             #                                          dtype=tf.float32,
             #                                          trainable=False,
-            #                                          name=name + ': private observations')
+            #                                          name=name f+ ': private observations')
             # self._private_actions = tf.Variable(tf.zeros([buffer_max_size], tf.int64),
             #                                     shape=[buffer_max_size],
             #                                     dtype=tf.int64,
@@ -114,7 +114,6 @@ def create_single_agent(cls: type,
 
             # num_of_agents = int("".join(item for item in list(filter(str.isdigit, ckpt_dir.split('/')[1]))))
             # if num_of_agents > 3:
-
             if not self.checkpointer.checkpoint_exists:
                 num_of_agents = int("".join(item for item in list(filter(str.isdigit, ckpt_dir.split('/')[1]))))
                 if num_of_agents > 3:
@@ -134,7 +133,7 @@ def create_single_agent(cls: type,
                             print("Loading {} from checkpoint of Agent-{} in the 3-Agent case".format
                                   (self._name,
                                    ((self._agent_id - 1) % 3) + 1))
-            else:
+            elif config.SCALE_BIAS:
                 self.scale_bias(0.2)
 
             self.best_checkpointer = MyCheckpointer(
@@ -440,6 +439,7 @@ def create_single_agent(cls: type,
             next_max_charge = parking.next_max_charge
             next_min_charge = parking.next_min_charge
             next_max_discharge = parking.next_max_discharge
+            next_min_discharge = parking.next_min_discharge
             next_min_discharge = parking.next_min_discharge
             max_charging_rate = parking.max_charging_rate
             max_discharging_rate = parking.max_discharging_rate
