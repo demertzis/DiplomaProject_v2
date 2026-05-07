@@ -1,10 +1,12 @@
 import json
 import math
+import os
 import sys
 from time import time
 
 import tensorflow as tf
 from keras.src.optimizers.schedules import ExponentialDecay
+from keras.src.optimizers.schedules.learning_rate_schedule import CosineDecayRestarts
 from tf_agents.agents.dqn.dqn_agent import DdqnAgent
 from tf_agents.networks import sequential
 from tf_agents.specs import tensor_spec
@@ -13,7 +15,7 @@ from tf_agents.trajectories.time_step import TimeStep
 import app.policies.tf_reward_functions as rf
 import config
 from app.abstract.tf_single_agent_single_model import create_single_agent
-from app.abstract.utils import RandomDistributionTrainScheduler
+from app.abstract.utils import RandomDistributionTrainScheduler, RandomCombinationsTrainScheduler
 from app.models.tf_energy_3 import EnergyCurve
 from app.models.tf_pwr_env_5 import TFPowerMarketEnv
 from app.policies.multiple_tf_agents_single_model import MultipleAgents
@@ -38,11 +40,12 @@ reward_function_array = [rf.vanilla,
                          rf.new_reward_buyers_biased,
                          rf.new_reward_sellers_biased,
                          rf.new_reward_proportional_punishing,
+                         rf.new_reward_extreme_punishing,
                          rf.new_reward_equal]
 try:
     reward_function = reward_function_array[int(sys.argv[2])]
 except:
-    reward_function = reward_function_array[0]
+    reward_function = reward_function_array[4]
 
 if NUMBER_OF_AGENTS == 1:
     try:
@@ -113,18 +116,28 @@ def load_pretrained_model(model_dir):
     # return q_net, target_q_net
     return q_net
 
-
-model_dir = 'pretrained_networks/'
+model_dir = 'pretrained_networks/new_models/'
 best_model_dir = 'pretrained_networks/best_models/'
 # best_model_dir = 'pretrained_networks/new_models/'
-try:
-    q_net = load_pretrained_model(best_model_dir + 'model_output_8_35.keras')
-except OSError:
-    q_net = load_pretrained_model(model_dir + 'model_output_8_35.keras')
-try:
-    offset_q_net = load_pretrained_model(best_model_dir + 'model_output_8_35_offset.keras')
-except OSError:
-    offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
+if config.LOAD_BEST_PRETRAINED_MODEL:
+    try:
+        q_net = load_pretrained_model(best_model_dir + 'model_output_8_35.keras')
+        offset_q_net = load_pretrained_model(best_model_dir + 'model_output_8_35_offset.keras')
+    except OSError:
+        try:
+            q_net = load_pretrained_model(model_dir + 'model_output_8_35.keras')
+            offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
+        except OSError:
+            raise Exception("no pretrained models, check the option START_FROM_SCRATCH in the config file."
+                            " If there are checkpoints they will be loaded anyways")
+else:
+    try:
+        q_net = load_pretrained_model(model_dir + 'model_output_8_35.h5')
+        offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35.h5')
+    except OSError:
+        raise Exception("no pretrained models, check the option START_FROM_SCRATCH in the config file."
+                        " If there are checkpoints they will be loaded anyways")
+
 
 # q_net = sequential.Sequential(layers_list)
 # q_net.build(input_shape=(1,35))
@@ -152,7 +165,7 @@ learning_rate = 3e-4
 # reward_function = rf.punishing_non_uniform_individually_rational
 reward_name = reward_function.__name__
 
-ckpt_dir = '/'.join(['checkpoints_2',
+ckpt_dir = '/'.join([config.CHECKPOINT_FOLDER,
                      str(NUMBER_OF_AGENTS) +
                      '_AGENTS',
                      reward_name])
@@ -188,12 +201,17 @@ for i in range(NUMBER_OF_AGENTS):
             offset = single_agent_offset
         if config.START_FROM_SCRATCH:
             layers = []
-            for units in [40, 80, num_actions]:
+            for units in [80, 80]:
                 layers.append(tf.keras.layers.Dense(
                     units,
                     activation=tf.keras.activations.elu,
                     kernel_initializer=tf.keras.initializers.VarianceScaling(
                         scale=2.0, mode='fan_in', distribution='truncated_normal')))
+            layers.append(tf.keras.layers.Dense(
+                num_actions,
+                activation=tf.keras.activations.linear,
+                kernel_initializer=tf.keras.initializers.VarianceScaling(
+                    scale=2.0, mode='fan_in', distribution='truncated_normal')))
 
             new_q_net = sequential.Sequential(layers, name='Agent_{}_QNetwork'.format(i))
             new_target_q_net = new_q_net.copy(name='Agent_{}_TargetQNetwork'.format(i))
@@ -213,9 +231,9 @@ for i in range(NUMBER_OF_AGENTS):
             #                                                                                   amsgrad=True),),
             'optimizer': tf.keras.optimizers.AdamW(learning_rate=learning_rate),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
-            # 'epsilon_greedy': 0.2,single_agent_offset
-            'epsilon_greedy': None,
-            'boltzmann_temperature': 0.9,
+            'epsilon_greedy': config.EPSILON,#,single_agent_offset
+            # 'epsilon_greedy': None,
+            # 'boltzmann_temperature': 0.9,
             'target_update_tau': 0.1,
             'target_update_period': 2400,
         }
@@ -249,8 +267,9 @@ else:
     # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
 with tf.device(f'GPU:0' if gpus else 'CPU:0'):
-    energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
-    energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
+    energy_curve_train = EnergyCurve(config.TRAIN_PRICES_FILE, 'train')
+    #energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
+    energy_curve_eval = EnergyCurve(config.EVAL_PRICES_FILE, 'eval')
 
     spec = single_agent_time_step_spec
     # env_time_step_spec = TimeStep(step_type=tensor_spec.add_outer_dim(spec.step_type, 1),
@@ -300,7 +319,18 @@ with tf.device(f'GPU:0' if gpus else 'CPU:0'):
 
     # train_scheduler = ConstantDistributionTrainScheduler(lr_list,
     #                                                      epochs_per_agent)
-    train_scheduler = RandomDistributionTrainScheduler(len(agent_list), ExponentialDecay(6e-7, 1, 0.9), 3e-8, 4, 1)
+    # train_scheduler = RandomDistributionTrainScheduler(len(agent_list), ExponentialDecay(1e-5, 1, 0.5), 3e-8, 4, 0)
+    train_scheduler = RandomCombinationsTrainScheduler(len(agent_list),
+                                                       ExponentialDecay(1e-3,
+                                                                        1,
+                                                                        0.75,
+                                                                        staircase=True),
+                                                       # CosineDecayRestarts(1e-3,
+                                                       #                     config.EPSILON_RESTART_PERIOD,
+                                                       #                     t_mul=1.0,
+                                                       #                     m_mul=0.5),
+                                                       10,
+                                                       NUMBER_OF_AGENTS)
     multi_agent = MultipleAgents(train_env=train_env,
                                  eval_env=eval_env,
                                  agents_list=agent_list,
@@ -331,6 +361,32 @@ with tf.device(f'GPU:0' if gpus else 'CPU:0'):
 # for agent in agent_list:
 #     agent.scale_bias(0.2)
 
+if config.EVAL_PRETRAINED_NETWORKS:
+    for i in range(NUMBER_OF_AGENTS):
+        if i % 3 == 2:
+            offset = True
+        else:
+            offset = False
+        new_q_net = (offset_q_net if offset else q_net).copy(name='Agent_{}_QNetwork'.format(i))
+        agent_list[i].load_q_network(q_net if not offset else offset_q_net)
+    eval_score = multi_agent.eval_policy()
+    if config.RECORD_EVAL:
+        func_name = "_trained_single_agent" if config.LOAD_BEST_PRETRAINED_MODEL else "_pretrained_policy"
+        dic_key = ("_".join(ckpt_dir.split('/')[1:2]) + func_name).title()
+
+                           # ckpt_dir.split('/')[2].split('_')[2:]).title()
+        if os.path.isfile('summary_data/best_policies_avg_total_return.json'):
+            with open('summary_data/best_policies_avg_total_return.json', "r") as file:
+                d = json.loads(file.read())
+                d[dic_key] = round(float(eval_score.numpy()), ndigits=3)
+        else:
+            d = {dic_key: round(float(eval_score.numpy()), ndigits=3)}
+        with open('summary_data/best_policies_avg_total_return.json', "w") as file:
+            json.dump(d, file)
+    eval_policy = "Best Single Station Trained Networks" if config.LOAD_BEST_PRETRAINED_MODEL else "Pretrained Networks"
+    print("Eval Score of {}, is: {}".format(eval_policy, eval_score))
+    exit()
+
 if config.USE_JIT:
     st = time()
     multi_agent.train()
@@ -352,5 +408,5 @@ else:
     st = time()
     # for _ in range(20):
     # multi_agent.plot_actions('plots/temp.csv')
-    multi_agent.train(10)
+    multi_agent.train(50)
     print('Expired time: {}'.format(time() - st))

@@ -1,7 +1,10 @@
-for i in 3
+#!/usr/bin/bash
+python save_plot_data.py 1 4 0
+python save_plot_data.py 1 4 1
+for i in 3 6 15
 do
-  for j in 1 3
+  for j in 4
   do
-    python test_run_6_single_model.py $i $j
+    python save_plot_data.py $i $j
   done
 done

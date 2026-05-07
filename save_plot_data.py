@@ -1,6 +1,7 @@
 import json
 import math
 import sys
+from http.cookiejar import offset_from_tz_string
 from time import time
 
 import tensorflow as tf
@@ -116,22 +117,47 @@ def load_pretrained_model(model_dir):
     return q_net
 
 
-model_dir = 'pretrained_networks/'
+model_dir = 'pretrained_networks/best_models/'
 best_model_dir = 'pretrained_networks/best_models/'
 # best_model_dir = 'pretrained_networks/new_models/'
-try:
-    q_net = load_pretrained_model(best_model_dir + 'model_output_8_35.keras')
-except OSError:
-    q_net = load_pretrained_model(model_dir + 'model_output_8_35.keras')
-try:
-    offset_q_net = load_pretrained_model(best_model_dir + 'model_output_8_35_offset.keras')
-except OSError:
-    offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
+if config.LOAD_BEST_PRETRAINED_MODEL:
+    try:
+        q_net = load_pretrained_model(best_model_dir + 'model_output_8_35.keras')
+        offset_q_net = load_pretrained_model(best_model_dir + 'model_output_8_35_offset.keras')
+    except OSError:
+        try:
+            q_net = load_pretrained_model(model_dir + 'model_output_8_35.keras')
+            offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
+        except OSError:
+            raise Exception("no pretrained models, check the option START_FROM_SCRATCH in the config file."
+                            " If there are checkpoints they will be loaded anyways")
+else:
+    try:
+        q_net = load_pretrained_model(model_dir + 'model_output_8_35.keras')
+        offset_q_net = load_pretrained_model(model_dir + 'model_output_8_35_offset.keras')
+    except OSError:
+        raise Exception("no pretrained models, check the option START_FROM_SCRATCH in the config file."
+                        " If there are checkpoints they will be loaded anyways")
+
+
+# q_net = sequential.Sequential(layers_list)
+# q_net.build(input_shape=(1,35))
+# offset_q_net = sequential.Sequential(layers_list)
+# offset_q_net.build(input_shape=(1,35))
+
 
 learning_rate = 3e-4
-reward_name = reward_function.__name__ if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
+if config.PLOT_PRETRAINED_NETWORK or config.PLOT_SMART_POLICY:
+    if config.LOAD_BEST_PRETRAINED_MODEL:
+        reward_name = 'trained_single_agent'
+    else:
+        reward_name = 'pretrained_policy'
+else:
+    reward_name = reward_function.__name__
 
-ckpt_dir = '/'.join(['checkpoints_2',
+# reward_name = reward_function.__name__ if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy' if not config.PLOT_BEST_PRETRAINED_NETWORK else
+
+ckpt_dir = '/'.join([config.CHECKPOINT_FOLDER,
                      str(NUMBER_OF_AGENTS) +
                      '_AGENTS',
                      reward_name])
@@ -168,12 +194,17 @@ for i in range(NUMBER_OF_AGENTS):
             offset = single_agent_offset
         if config.START_FROM_SCRATCH:
             layers = []
-            for units in [40, 80, num_actions]:
+            for units in [40, 80]:
                 layers.append(tf.keras.layers.Dense(
                     units,
                     activation=tf.keras.activations.elu,
                     kernel_initializer=tf.keras.initializers.VarianceScaling(
                         scale=2.0, mode='fan_in', distribution='truncated_normal')))
+            layers.append(tf.keras.layers.Dense(
+                num_actions,
+                activation=tf.keras.activations.linear,
+                kernel_initializer=tf.keras.initializers.VarianceScaling(
+                    scale=2.0, mode='fan_in', distribution='truncated_normal')))
 
             new_q_net = sequential.Sequential(layers, name='Agent_{}_QNetwork'.format(i))
             new_target_q_net = new_q_net.copy(name='Agent_{}_TargetQNetwork'.format(i))
@@ -193,9 +224,9 @@ for i in range(NUMBER_OF_AGENTS):
             #                                                                                   amsgrad=True),),
             'optimizer': tf.keras.optimizers.AdamW(learning_rate=learning_rate),
             # 'td_errors_loss_fn': common.element_wise_squared_loss,
-            # 'epsilon_greedy': 0.2,single_agent_offset
-            'epsilon_greedy': None,
-            'boltzmann_temperature': 0.9,
+            'epsilon_greedy': config.EPSILON,#,single_agent_offset
+            # 'epsilon_greedy': None,
+            # 'boltzmann_temperature': 0.9,
             'target_update_tau': 0.1,
             'target_update_period': 2400,
         }
@@ -229,8 +260,9 @@ else:
     # eval_avg_vehicle_list += offset_vehicles.avg_vehicles_list
 
 with tf.device(f'GPU:0' if gpus else 'CPU:0'):
-    energy_curve_train = EnergyCurve('data/data_sorted_by_date.csv', 'train')
-    energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
+    energy_curve_train = EnergyCurve(config.TRAIN_PRICES_FILE, 'train')
+    #energy_curve_eval = EnergyCurve('data/randomized_data.csv', 'eval')
+    energy_curve_eval = EnergyCurve(config.EVAL_PRICES_FILE, 'eval')
 
     spec = single_agent_time_step_spec
     train_env = TFPowerMarketEnv(spec,
@@ -268,39 +300,58 @@ with tf.device(f'GPU:0' if gpus else 'CPU:0'):
 # plot_actions = True
 # plot_actions = False
 # last_folder = ['actions'] if plot_actions else ['rewards']
-last_folder = ['actions']
+if config.PLOT_PRETRAINED_NETWORK:
+    for i in range(NUMBER_OF_AGENTS):
+        if i % 3 == 2:
+            offset = True
+        else:
+            offset = False
+        new_q_net = (offset_q_net if offset else q_net).copy(name='Agent_{}_QNetwork'.format(i))
+        agent_list[i].load_q_network(q_net if not offset else offset_q_net)
+    print('eval_score: {}'.format(multi_agent.eval_policy()))
+
+if config.PLOT_SMART_POLICY:
+    policy_list = [SmartCharger(0.1, num_actions, single_agent_time_step_spec) for _ in multi_agent._agent_list]
+else:
+    policy_list = None
+
+last_folder = 'actions'
 if NUMBER_OF_AGENTS == 1:
     offset_string = '_offset' if single_agent_offset else ''
-    single_reward = 'vanilla' if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
-    plot_filename = '/'.join(['plots',
-                              str(NUMBER_OF_AGENTS) + '_Agent',
-                              single_reward + offset_string] +
-                             last_folder)
+    # single_reward = 'halfway' if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
+    plot_filename = '/'.join([config.PLOTS_FOLDER,
+                              str(NUMBER_OF_AGENTS) + '_Agents',
+                              reward_name + offset_string,
+                              # single_reward + offset_string] +
+                              last_folder])
 else:
-    plot_filename ='/'.join(['plots',
+    plot_filename ='/'.join([config.PLOTS_FOLDER,
                              str(NUMBER_OF_AGENTS) + '_Agents',
-                             reward_name] +
-                            last_folder)
+                             reward_name,
+                             last_folder])
+
 multi_agent.plot_actions(filename=plot_filename,
                          best=True,
-                         actions=True)
+                         actions=True,
+                         policy_list = policy_list)
 
 # plot_actions = True
 # plot_actions = False
 # last_folder = ['actions'] if plot_actions else ['rewards']
-last_folder = ['rewards']
+last_folder = 'rewards'
 if NUMBER_OF_AGENTS == 1:
     offset_string = '_offset' if single_agent_offset else ''
-    single_reward = 'vanilla' if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
-    plot_filename = '/'.join(['plots',
-                              str(NUMBER_OF_AGENTS) + '_Agent',
-                              single_reward + offset_string] +
-                             last_folder)
+    single_reward = 'halfway' if not config.PLOT_PRETRAINED_NETWORK else 'pretrained_policy'
+    plot_filename = '/'.join([config.PLOTS_FOLDER,
+                              str(NUMBER_OF_AGENTS) + '_Agents',
+                              reward_name + offset_string,
+                              last_folder])
 else:
-    plot_filename ='/'.join(['plots',
+    plot_filename ='/'.join([config.PLOTS_FOLDER,
                              str(NUMBER_OF_AGENTS) + '_Agents',
-                             reward_name] +
-                            last_folder)
+                             reward_name,
+                             last_folder])
 multi_agent.plot_actions(filename=plot_filename,
                          best=True,
-                         actions=False)
+                         actions=False,
+                         policy_list=policy_list)

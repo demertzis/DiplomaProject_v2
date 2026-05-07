@@ -8,8 +8,7 @@ from tf_agents.agents.tf_agent import LossInfo
 from tf_agents.trajectories import trajectory
 from tf_agents.typing import types
 from tf_agents.typing.types import SpecTensorOrArray
-from tf_agents.utils.common import Checkpointer
-
+from tf_agents.utils.common import Checkpointer, maybe_copy_target_network_with_checks
 import config
 from app.abstract.utils import MyCheckpointer
 from app.models.tf_parking_10 import Parking
@@ -114,13 +113,13 @@ def create_single_agent(cls: type,
 
             # num_of_agents = int("".join(item for item in list(filter(str.isdigit, ckpt_dir.split('/')[1]))))
             # if num_of_agents > 3:
-            if not self.checkpointer.checkpoint_exists:
+            if not self.checkpointer.checkpoint_exists and config.START_FROM_PREVIOUS:
                 num_of_agents = int("".join(item for item in list(filter(str.isdigit, ckpt_dir.split('/')[1]))))
                 if num_of_agents > 3:
                     ckpt_folders = ckpt_dir.split('/')
                     ckpt_folders[1] = '3_AGENTS'
                     new_ckpt_dir = "/".join(ckpt_folders)
-                    new_ckpt_dir = "best_" + new_ckpt_dir if config.START_FROM_BEST else new_ckpt_dir
+                    new_ckpt_dir = ("best_" + new_ckpt_dir) if config.START_FROM_BEST else new_ckpt_dir
                     ckpt_agent_name = "Agent-" + str(((self._agent_id - 1) % 3) + 1)
                     new_ckpt_agent_dir = '/'.join([new_ckpt_dir, ckpt_agent_name])
                     if os.path.exists(new_ckpt_agent_dir):
@@ -158,6 +157,24 @@ def create_single_agent(cls: type,
             #     action_spec=(),
             #     info_spec=buffer_info_spec,
             # )
+
+        def extract_q_network(self, best=True):
+            pass
+
+
+        def load_q_network(self, q_network):
+            net_observation_spec = self._time_step_spec.observation
+            self._q_network = q_network
+            q_network.create_variables(net_observation_spec)
+            self._target_q_network = maybe_copy_target_network_with_checks(
+                self._q_network, input_spec=net_observation_spec,
+                name='TargetQNetwork')
+
+            self._check_network_output(self._q_network, 'q_network')
+            self._check_network_output(self._target_q_network, 'target_q_network')
+            return
+
+
 
         def checkpoint_save(self, global_step, best=False):
             if best:
@@ -558,7 +575,7 @@ def create_single_agent(cls: type,
                            False)
 
         def scale_bias(self, scale: int):
-            weights = self._q_network.layers[-1].variables[1]
+            weights = self._q_network.layers[-2].variables[1]
             weights.assign_add(tf.math.abs(weights) * scale)
 
         def wrap_external_policy_action(self, action, collect: bool):

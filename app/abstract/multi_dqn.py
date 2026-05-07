@@ -1,3 +1,5 @@
+from functools import partial
+
 from tf_agents.agents import tf_agent
 from tf_agents.agents.dqn.dqn_agent import DdqnAgent, DqnLossInfo
 import tensorflow as tf
@@ -6,7 +8,10 @@ from tf_agents.networks import utils as network_utils
 from tf_agents.utils import nest_utils, eager_utils
 from tf_agents.utils import common
 
-from app.abstract.utils import my_aggregate_losses
+import config
+from app.abstract.utils import my_aggregate_losses, MyEpsilonGreedyPolicy
+
+
 # class MultiDdqnAgent_2(DdqnAgent):
 #     def _check_action_spec(self, action_spec):
 #         flat_action_spec = tf.nest.flatten(action_spec)
@@ -85,11 +90,37 @@ class MultiDdqnAgent(DdqnAgent):
             self._grad_multiplier = tf.cast(num_of_agents, tf.float32)
         else:
             raise Exception('num_of_agents argument must be provided but it wasn\'t' )
-        super(MultiDdqnAgent, self).__init__(*args, **kwargs)
+        if kwargs.pop("epsilon_decay"):
+            self.epsilon_decay_steps = tf.Variable(0.0, dtype=tf.float32)
+            self._starting_epsilon_decay_count = tf.Variable(0.0, dtype=tf.float32)
+            def epsilon_decay(initial, rate, time_period):
+                if not isinstance(rate, float) and rate > 1.0:
+                    raise Exception("Rate of Decay has to be a float less than 1.0")
+                # if not isinstance(time_period, int):
+                #     raise Exception("Time_period has to be a int")
+                # self.epsilon_decay_steps.assign(tf.math.mod(self.epsilon_decay_steps, restart_period))
+                self.epsilon_decay_steps.assign_add(1.0)
+                # time_period = tf.cast(time_period, tf.float32)
+                return initial * tf.pow(rate, (self.epsilon_decay_steps - 1.0) // time_period)
+            epsilon = partial(epsilon_decay,initial=kwargs.pop("epsilon_greedy"),
+                              rate= config.EPSILON_DECAY_RATE,
+                              time_period=tf.cast(config.EPSILON_DECAY_PERIOD, tf.float32),)
+                              # restart_period = tf.cast(config.EPSILON_RESTART_PERIOD, tf.float32))
+        super(MultiDdqnAgent, self).__init__(epsilon_greedy=epsilon, *args, **kwargs)
+
 
     @property
     def optimizer(self):
         return self._optimizer
+
+
+    def reset_epsilon_decay(self, starting_steps = 0, start_from_zero = False):
+        if start_from_zero:
+            self._starting_epsilon_decay_count.assign(0.0)
+        if hasattr(self, "epsilon_decay_steps"):
+            self.epsilon_decay_steps.assign(self._starting_epsilon_decay_count * tf.cast(starting_steps, self.epsilon_decay_steps.dtype))
+            self._starting_epsilon_decay_count.assign_add(1.0)
+
     def _check_action_spec(self, action_spec):
         flat_action_spec = tf.nest.flatten(action_spec)
 
@@ -125,6 +156,19 @@ class MultiDdqnAgent(DdqnAgent):
             expected_output_shape=(num_of_agents ,self._num_actions,),
             label=label)
 
+    @property
+    def exploration_mask(self):
+        if not hasattr(self._collect_policy, 'agent_mask'):
+            return "There is no exploration mask set on the collect policy"
+        else:
+            return self._collect_policy.agent_mask
+    @exploration_mask.setter
+    def exploration_mask(self, value):
+    # def set_exploration_mask(self, value):
+        if not hasattr(self._collect_policy, 'agent_mask'):
+            raise Exception("Current Collect Policy does not support agent masking")
+        self._collect_policy.agent_mask = value
+
     def _setup_policy(self, time_step_spec, action_spec,
                       boltzmann_temperature, emit_log_probability):
 
@@ -141,7 +185,8 @@ class MultiDdqnAgent(DdqnAgent):
             collect_policy = boltzmann_policy.BoltzmannPolicy(
                 policy, temperature=self._boltzmann_temperature)
         else:
-            collect_policy = epsilon_greedy_policy.EpsilonGreedyPolicy(
+            collect_policy = MyEpsilonGreedyPolicy(
+            # collect_policy = epsilon_greedy_policy.EpsilonGreedyPolicy(
                 policy, epsilon=self._epsilon_greedy)
         policy = greedy_policy.GreedyPolicy(policy)
 

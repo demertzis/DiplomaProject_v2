@@ -1,6 +1,6 @@
 import abc
 import bisect
-import itertools
+from itertools import combinations
 import logging
 import random
 from typing import Tuple, List, Union
@@ -20,11 +20,14 @@ from tensorflow.python.util.tf_inspect import ArgSpec, FullArgSpec
 from tf_agents.drivers.dynamic_episode_driver import DynamicEpisodeDriver
 from tf_agents.environments.py_environment import PyEnvironment
 from tf_agents.networks import network, Network
+from tf_agents.policies import EpsilonGreedyPolicy
 from tf_agents.trajectories import Trajectory, Transition, policy_step
 from tf_agents.trajectories.trajectory import _validate_rank
 from tf_agents.typing import types
 from tf_agents.utils import composite, common, nest_utils
 from tf_agents.utils.common import Checkpointer, AggregatedLosses
+
+import tensorflow_probability as tfp
 
 tf_inspect = tf_util.tf_inspect
 
@@ -700,6 +703,8 @@ class MultiAgentTrainScheduler(abc.ABC):
         pass
 
 
+
+
 class ConstantDistributionTrainScheduler(MultiAgentTrainScheduler):
     """
     Multi-agent train scheduler that handles training when each agent trains for a constant amount of epochs. The order
@@ -764,8 +769,16 @@ class RandomDistributionTrainScheduler(MultiAgentTrainScheduler):
         self._number_of_agents = number_of_agents
         self._lr_high = lr_high
         self._lr_low = lr_low
-        self._epochs_high = epochs_high
-        self._epochs_low = epochs_low
+        if isinstance(epochs_high, int) and epochs_high >= 0:
+            self._epochs_high = epochs_high
+        else:
+            raise  Exception("Epochs are not valid, you provided: epochs_high: {}, epochs_low {}".format(epochs_high, epochs_low))
+        if isinstance(epochs_low, int) and epochs_low >= 0:
+            self._epochs_low = epochs_low
+        else:
+            raise Exception("Epochs are not valid, you provided: epochs_high: {}, epochs_low {}".format(epochs_high, epochs_low))
+        if epochs_low == 0 and epochs_high == 0:
+            raise Exception("Epochs are not valid, you provided: epochs_high: {}, epochs_low {}".format(epochs_high, epochs_low))
         self._count = 0
         self._last_agent = random.randint(0, number_of_agents - 1)
 
@@ -820,21 +833,138 @@ class RandomDistributionTrainScheduler(MultiAgentTrainScheduler):
         self._epochs_low = value
 
     def _update_agent(self):
-        new_agent = random.randint(0, max(0, self._number_of_agents - 2))
-        self._last_agent = new_agent + 1 if new_agent >= self._last_agent else new_agent
+        if self._number_of_agents > 1:
+            new_agent = random.randint(0, self._number_of_agents - 2)
+            self._last_agent = new_agent + 1 if new_agent >= self._last_agent else new_agent
+        print("Training Agent {}".format(self._last_agent + 1))
 
     def return_next_agent(self, epoch: int) -> tuple[List[int], float]:
-        if self._count < self._epochs_high:
-            lr = self._lr_high(self._count) if isinstance(self._lr_high, LearningRateSchedule) else self._lr_high
+        if self._count == 0:
+            self._update_agent()
+            self._count += 1
+        if self._count <= self._epochs_high:
+            lr = self._lr_high(self._count - 1) if isinstance(self._lr_high, LearningRateSchedule) else self._lr_high
             self._count += 1
             return [self._last_agent], lr
-        elif self._count < self._epochs_high + self._epochs_low:
+        elif self._count <= self._epochs_high + self._epochs_low:
             if self._count == self._epochs_high:
                 self._update_agent()
             lr = self._lr_low(self.count - 1) if isinstance(self._lr_low, LearningRateSchedule) else self._lr_low
             self._count += 1
             return [self._last_agent], lr
         else:
-            self._update_agent()
+            # self._update_agent()
             self._count = 0
             return self.return_next_agent(epoch)
+
+
+class RandomCombinationsTrainScheduler(MultiAgentTrainScheduler):
+    """
+    Multi-agent train scheduler that handles training when a combination of agents are trained simultaneously a given amount
+     of epochs and in random order. The learning rate returned can either be constant or a Keras LearningRateSchedule and the epoch given
+    translates to the amount of epochs each particular agent has trained
+    """
+    def __init__(self,
+                 number_of_agents: int,
+                 lr: float = 1e-4,
+                 epochs: int = 20,
+                 simultaneous: int = 2):
+        super().__init__()
+
+        self._number_of_agents = number_of_agents
+        if isinstance(lr, float) or isinstance(lr, LearningRateSchedule):
+            self._lr = lr
+        else:
+            raise Exception("lr has to be either a float or an instance of LearningRateSchedule")
+        if isinstance(epochs, int) and epochs >= 0:
+            self._epochs = epochs
+        else:
+            raise  Exception("Epochs are not valid, you provided:{}".format(epochs))
+        if isinstance(simultaneous, int) and simultaneous > 0:
+            self._simultaneous = simultaneous
+        else:
+            raise  Exception("Epochs are not valid, you provided:{}".format(epochs))
+        self._last_agent = random.randint(0, number_of_agents - 1)
+        self._count = 0
+        self._list_of_combinations = []
+
+    @property
+    def count(self):
+        return self._count
+
+    @count.setter
+    def count(self, value):
+        self._count = value
+
+    @property
+    def number_of_agents(self):
+        return self._number_of_agents
+
+    @property
+    def lr(self):
+        return self._lr_high
+
+    @lr.setter
+    def lr(self, value):
+        if not isinstance(value, float):
+            raise Exception('lr has to be a float less than 1.0 (preferably). {} was given'.format(type(value)))
+        self._lr = value
+
+    @property
+    def epochs(self):
+        return self._epochs
+
+    @epochs.setter
+    def epochs(self, value):
+        if not isinstance(value, int):
+            raise Exception('epochs has to be a positive int. {} was given'.format(type(value)))
+        self._epochs = value
+
+
+    def return_next_agent(self, epoch: int) -> tuple[List[int], float]:
+        if (epoch - 1) % self._epochs == 0:
+            if len(self._list_of_combinations) == 0:
+                self._list_of_combinations = list(combinations(list(range(self._number_of_agents)), self._simultaneous))
+
+            self._trainable_agents = self._list_of_combinations.pop()
+            self._count = 0
+        # if (epoch - 1) % self._epochs > 0:
+        lr = self._lr(self._count) if isinstance(self._lr, LearningRateSchedule) else self._lr
+        self._count += 1
+        return self._trainable_agents, lr
+
+
+class MyEpsilonGreedyPolicy(EpsilonGreedyPolicy):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._agent_mask = tf.Variable(tf.ones(self.policy_step_spec.action.shape, dtype=tf.bool))
+
+    @property
+    def agent_mask(self):
+        return self._agent_mask.value()
+
+    @agent_mask.setter
+    def agent_mask(self, value):
+        self._agent_mask.assign(tf.cast(value, tf.bool))
+
+    def _action(self, time_step, policy_state, seed):
+        seed_stream = tfp.util.SeedStream(seed=seed, salt='epsilon_greedy')
+        greedy_action = self._greedy_policy.action(time_step, policy_state)
+        random_action = self._random_policy.action(time_step, (), seed_stream())
+
+        shape = greedy_action.action.shape
+        rng = tf.random.uniform(
+            shape, maxval=1.0, seed=seed_stream(), name='epsilon_rng')
+        cond = tf.greater_equal(rng, self._get_epsilon())
+        # cond = self._agent_mask *
+        cond = cond | tf.reshape(self._agent_mask, shape)
+
+        # Selects the action/info from the random policy with probability epsilon.
+        # TODO(b/133175894): tf.compat.v1.where only supports a condition which is
+        # either a scalar or a vector. Use tf.compat.v2 so that it can support any
+        # condition whose leading dimensions are the same as the other operands of
+        # tf.where.
+        action = tf.nest.map_structure(lambda g, r: tf.compat.v1.where(cond, g, r),
+                                       greedy_action.action, random_action.action)
+
+        return policy_step.PolicyStep(action, greedy_action.state, ())

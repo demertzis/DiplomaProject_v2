@@ -347,7 +347,7 @@ def generate_vehicles_single_model(coefficient_function_list: List[Callable],
     return create_vehicles
 
 
-def generate_vehicles_constant_shape(coefficient_function, capacity: int):
+def     generate_vehicles_constant_shape(coefficient_function, capacity: int):
     def create_vehicles(time_of_day):
         # print('Tracing create_vehicles')
         day_coefficient = coefficient_function(tf.cast(time_of_day, tf.float32))
